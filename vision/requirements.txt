@@ -1,0 +1,5 @@
+# Picamera2 is installed separately using Raspberry Pi OS packages when needed.
+ultralytics
+opencv-python
+pyserial
+openvino

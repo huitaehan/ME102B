@@ -1,8 +1,10 @@
+from pathlib import Path
+
 import cv2
 from ultralytics import YOLO
 
 # 1. Load the OpenVINO model folder (trained YOLO11)
-model = YOLO("best_openvino_model/")
+model = YOLO(str(Path(__file__).resolve().parents[1] / "models/best_openvino_model"))
 
 # Calibration parameters for distance estimation (Pinhole Camera Model)
 # Set to expected flame height (e.g., 5.0 cm for a candle / lighter)

@@ -1,9 +1,11 @@
+from pathlib import Path
+
 import cv2
 from picamera2 import Picamera2
 from picamera2.devices.imx500 import IMX500
 
 # 1. Initialize the IMX500 AI Camera helper with your compiled model
-MODEL_PATH = "fire_network.rpk" 
+MODEL_PATH = str(Path(__file__).resolve().parents[2] / "models/imx500/fire_network.rpk")
 imx500 = IMX500(MODEL_PATH)
 
 # Calibration parameters for distance estimation (Pinhole Camera Model)

@@ -17,3 +17,11 @@ ENV/
 .DS_Store
 Thumbs.db
 
+
+# Local build output
+build/
+*.elf
+*.map
+
+# Generated IMX500 runtime model (keep conversion artifacts in models/imx500)
+models/imx500/*.rpk
