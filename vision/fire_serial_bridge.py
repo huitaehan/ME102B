@@ -25,7 +25,7 @@ def main():
     parser.add_argument('--flame-height-cm', type=float, default=5.0)
     parser.add_argument('--focal-length-px', type=float, required=True,
                         help='Repo defaults: 600 webcam; 490 Pi at 640x640. Calibrate.')
-    parser.add_argument('--start', action='store_true', help='Command automatic homing')
+    parser.add_argument('--start', action='store_true', help='Bench test only: requires firmware ALLOW_SERIAL_START=true')
     args = parser.parse_args()
     if args.flame_height_cm <= 0 or args.focal_length_px <= 0:
         parser.error('Calibration values must be positive')

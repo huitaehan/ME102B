@@ -33,6 +33,15 @@ uploading. Pin assignments are examples; automatic shooting remains disabled
 until mechanical limits and measured water-jet calibration are configured.
 Drive and horizontal scanning are not implemented.
 
+Start operation by pressing the separate button on GPIO23. During homing, the
+NEMA17 moves the turret toward 90 degrees above the ground until the limit switch
+on GPIO33 is pressed. This establishes the absolute home reference; it does not
+command a relative 90-degree turn from an unknown starting position. The turret
+then backs off to 85 degrees and searches incoming camera observations.
+The home limit switch never starts the machine. Serial `START` is disabled by
+default. See the [numbered state descriptions](firmware/esp32/README.md#state-descriptions)
+for the event conditions and services.
+
 ## Vision and serial bridge
 
 From the repository root, create a Python environment and install dependencies:
@@ -48,10 +57,13 @@ python -m pip install -r vision/requirements.txt
 Run YOLO and send detections to the connected ESP32 (replace the serial port):
 
 ```sh
-python vision/fire_serial_bridge.py --port /dev/ttyUSB0 --focal-length-px 600 --start
+python vision/fire_serial_bridge.py --port /dev/ttyUSB0 --focal-length-px 600
 ```
 
 Use `COM5` or your actual port on Windows. Close Arduino Serial Monitor first.
+Start the bridge before pressing the physical start button. Opening the serial
+port may reset the ESP32. Do not use `--start` for normal operation; that option
+only works when firmware `ALLOW_SERIAL_START` is enabled for bench tests.
 The bridge defaults to `models/best.pt`; `--model` accepts another model path.
 Distance uses assumed flame height and calibrated focal length, so calibrate for
 your camera resolution and target. Ctrl+C sends STOP; firmware latches FAULT
@@ -67,7 +79,7 @@ For Raspberry Pi camera input, install Picamera2 using your Raspberry Pi OS
 packages and make it available to your Python environment, then use:
 
 ```sh
-python vision/fire_serial_bridge.py --port /dev/ttyUSB0 --picamera --focal-length-px 490 --start
+python vision/fire_serial_bridge.py --port /dev/ttyUSB0 --picamera --focal-length-px 490
 ```
 
 The bridge runs Ultralytics inference, not the IMX500 accelerator. The separate
