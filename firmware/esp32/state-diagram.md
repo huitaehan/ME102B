@@ -29,20 +29,21 @@ stateDiagram-v2
         Search --> Home: New start-button press / pump OFF and cancel motion
         Search --> Characterize: Back-off complete and fresh fire detected
         Search --> Fault: Limit switch still pressed after back-off
-        Characterize --> Aim: Fresh fire within range
-        Characterize --> Drive: Fresh fire outside range
+        Characterize --> Aim: Camera fire and IR confirmed, within range
+        Characterize --> Drive: Camera fire and IR confirmed, outside range
         Characterize --> Search: Fire absent or data stale
         Drive --> Characterize: Fresh fire now within range
         Drive --> Search: Fire absent or data stale
         Aim --> Shoot: Valid trajectory and aiming complete / pump ON
         Aim --> Fault: Calibration missing or trajectory invalid
+        Aim --> Characterize: Infrared confirmation lost
         Aim --> Drive: Fire outside range
         Aim --> Search: Fire absent or data stale
         Shoot --> Check: 3 seconds elapsed / pump OFF
-        Shoot --> Check: Fire absent, out of range, or data stale / pump OFF
+        Shoot --> Check: Fire absent, out of range, data stale, or IR lost / pump OFF
         Check --> Characterize: Fresh fire after 500 ms settling
-        Check --> Search: Fresh no-fire frames span 2 seconds after settling
-        Check --> Fault: Camera data stale
+        Check --> Search: Fresh no-fire frames and IR clear span 2 seconds after settling
+        Check --> Fault: Camera stale or infrared data not ready
         Fault --> Wait: ESP32 reset
 
         note right of Home
@@ -60,11 +61,11 @@ stateDiagram-v2
         end note
         note right of Aim
             SERVICES: trajectory calculation and stepper control
-            CHECKERS: range, visibility, commanded steps complete
+            CHECKERS: range, visibility, infrared support, steps complete
         end note
         note right of Check
             SERVICE: pump OFF
-            CHECKERS: settling timer, new frames, no-fire duration
+            CHECKERS: settling timer, new frames, infrared clear, no-fire duration
         end note
         note right of Fault
             Pump OFF; stepper driver disabled
@@ -80,3 +81,9 @@ stateDiagram-v2
 - Camera data becomes stale after 1.5 seconds; usable range is 0.10–2.00 m.
 - A reset from any powered state restarts in Wait for start. Physical power-off
   requires switching the relevant supplies; software does not cut supply power.
+
+- Characterize waits with pump off when vision and infrared disagree or the analog
+  sensor is uncalibrated. IR alone does not authorize aiming or pumping.
+- GPIO34 samples analog infrared intensity; it does not measure temperature.
+- The average uses eight samples at 20 ms intervals, with calibrated hysteresis.
+  IR-only detection in Fire check keeps the pump off and resets the clear timer.

@@ -6,6 +6,12 @@
 
 constexpr int STEP_PIN=25, DIR_PIN=26, ENABLE_PIN=27;
 constexpr int START_PIN=23, HOME_PIN=33, PUMP_PIN=32;
+constexpr int FLAME_PIN=34;
+constexpr bool FLAME_CALIBRATED=false;
+constexpr bool FLAME_HIGH_MEANS_FIRE=true;
+constexpr int FLAME_ON_THRESHOLD=2400, FLAME_OFF_THRESHOLD=2000;
+constexpr uint32_t FLAME_SAMPLE_MS=20, FLAME_TIMEOUT_MS=200;
+constexpr int FLAME_SAMPLE_COUNT=8;
 constexpr bool ALLOW_SERIAL_START=false;
 constexpr bool HOME_DIR_HIGH=true, PUMP_ACTIVE_HIGH=true;
 
@@ -32,6 +38,10 @@ uint32_t startChanged=0;
 bool releasedBeforeStart=false, checkSawFrame=false, aimSet=false;
 long position=0, target=0;
 float distanceM=0, confidence=0;
+int flameSamples[FLAME_SAMPLE_COUNT]={};
+int flameIndex=0, flameCount=0, flameTotal=0, flameAverage=0;
+bool infraredFire=false;
+uint32_t lastFlameSample=0, lastFlameReport=0;
 char input[96]; size_t inputLength=0; bool dropping=false;
 
 // SERVICE FUNCTION: Turn the water pump on or off.
@@ -108,6 +118,46 @@ bool targetVisible() { return visionFresh() && fire; }
 // EVENT CHECKER: Check if the fire is within shooting range.
 bool targetInRange() { return distanceM>=MIN_RANGE_M && distanceM<=MAX_RANGE_M; }
 
+// SERVICE FUNCTION: Read and average the analog flame sensor without waiting.
+void serviceFlameSensor() {
+  uint32_t now=millis();
+  if(now-lastFlameSample<FLAME_SAMPLE_MS) return;
+  lastFlameSample=now;
+  flameTotal-=flameSamples[flameIndex];
+  flameSamples[flameIndex]=analogRead(FLAME_PIN);
+  flameTotal+=flameSamples[flameIndex];
+  flameIndex=(flameIndex+1)%FLAME_SAMPLE_COUNT;
+  if(flameCount<FLAME_SAMPLE_COUNT) ++flameCount;
+  flameAverage=flameTotal/flameCount;
+  if(FLAME_HIGH_MEANS_FIRE) {
+    if(flameAverage>=FLAME_ON_THRESHOLD) infraredFire=true;
+    else if(flameAverage<=FLAME_OFF_THRESHOLD) infraredFire=false;
+  } else {
+    if(flameAverage<=FLAME_ON_THRESHOLD) infraredFire=true;
+    else if(flameAverage>=FLAME_OFF_THRESHOLD) infraredFire=false;
+  }
+}
+
+// EVENT CHECKER: Check if the flame sensor is calibrated and has recent readings.
+bool flameSensorReady() {
+  bool thresholdsValid=FLAME_ON_THRESHOLD>=0 && FLAME_ON_THRESHOLD<=4095 &&
+    FLAME_OFF_THRESHOLD>=0 && FLAME_OFF_THRESHOLD<=4095 &&
+    (FLAME_HIGH_MEANS_FIRE ? FLAME_ON_THRESHOLD>FLAME_OFF_THRESHOLD :
+                            FLAME_ON_THRESHOLD<FLAME_OFF_THRESHOLD);
+  return FLAME_CALIBRATED && thresholdsValid && flameCount==FLAME_SAMPLE_COUNT &&
+    millis()-lastFlameSample<FLAME_TIMEOUT_MS;
+}
+
+// EVENT CHECKER: Check if the infrared reading supports the camera detection.
+bool flameConfirmed() { return flameSensorReady() && infraredFire; }
+
+// SERVICE FUNCTION: Print analog readings so the flame threshold can be calibrated.
+void reportFlameSensor() {
+  if(millis()-lastFlameReport<500) return;
+  lastFlameReport=millis();
+  Serial.printf("FLAME,%d,%d,%d\n",flameAverage,int(flameSensorReady()),int(flameConfirmed()));
+}
+
 // EVENT CHECKER: Check if all requested motor steps are finished.
 bool motionDone() { return position==target && !pulseHigh; }
 
@@ -181,7 +231,7 @@ void serviceStateMachine() {
     case CHARACTERIZE:
 
       if(!targetVisible()) transition(SEARCH);
-      else transition(targetInRange()?CALCULATE_AIM:DRIVE);
+      else if(flameConfirmed()) transition(targetInRange()?CALCULATE_AIM:DRIVE);
       break;
     case DRIVE:
 
@@ -192,6 +242,7 @@ void serviceStateMachine() {
     case CALCULATE_AIM:
 
       if(!targetVisible()) { transition(SEARCH); break; }
+      if(!flameConfirmed()) { transition(CHARACTERIZE); break; }
       if(!targetInRange()) { transition(DRIVE); break; }
       if(!aimSet) {
         float angle;
@@ -202,17 +253,19 @@ void serviceStateMachine() {
       break;
     case SHOOT:
 
-      if(!visionFresh() || !fire || !targetInRange()) transition(FIRE_CHECK);
+      if(!visionFresh() || !fire || !targetInRange() || !flameConfirmed()) transition(FIRE_CHECK);
       else if(elapsed(SHOOT_MS)) transition(FIRE_CHECK);
       break;
     case FIRE_CHECK:
 
-      if(!visionFresh()) { transition(FAULT); break; }
+      if(!visionFresh() || !flameSensorReady()) { transition(FAULT); break; }
       if(!elapsed(SETTLE_MS)) { checkFrame=frameId; break; }
+      if(infraredFire) { checkSawFrame=false; clearSince=0; }
 
       if(frameId!=checkFrame) {
         checkFrame=frameId;
         if(fire) { transition(CHARACTERIZE); break; }
+        if(infraredFire) break;
         if(!checkSawFrame) { checkSawFrame=true; clearSince=millis(); }
         if(millis()-clearSince>=CLEAR_MS) transition(SEARCH);
       }
@@ -230,6 +283,7 @@ void setup() {
   pinMode(DIR_PIN,OUTPUT); pinMode(ENABLE_PIN,OUTPUT);
   digitalWrite(ENABLE_PIN,LOW); pinMode(HOME_PIN,INPUT_PULLUP);
   pinMode(START_PIN,INPUT_PULLUP);
+  pinMode(FLAME_PIN,INPUT); analogReadResolution(12);
   startRaw=startStable=previousStart=(digitalRead(START_PIN)==LOW);
   releasedBeforeStart=!startRaw; startChanged=millis();
   Serial.begin(115200); entered=millis();
@@ -238,5 +292,5 @@ void setup() {
 
 // SERVICE FUNCTION: Keep checking inputs and running the state machine and motor.
 void loop() {
-  checkSerial(); checkStartButton(); checkLimitSwitch(); serviceStateMachine(); serviceStepper();
+  serviceFlameSensor(); checkSerial(); checkStartButton(); checkLimitSwitch(); serviceStateMachine(); serviceStepper(); reportFlameSensor();
 }

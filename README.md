@@ -1,7 +1,7 @@
 # ME102B — Fire detection and water turret
 
 YOLO runs on a computer or Raspberry Pi. A USB serial bridge sends detections
-and estimated distances to an ESP32, which controls nozzle elevation and the pump.
+and estimated distances to an ESP32, which reads an analog flame sensor and controls nozzle elevation and the pump.
 
 ## Repository layout
 
@@ -31,6 +31,10 @@ Install the Espressif ESP32 board package and select your board and serial port.
 Read the [hardware and calibration instructions](firmware/esp32/README.md) before
 uploading. Pin assignments are examples; automatic shooting remains disabled
 until mechanical limits and measured water-jet calibration are configured.
+An analog infrared flame sensor on GPIO34 must support the camera detection
+before aiming/shooting. Calibrate its thresholds and set FLAME_CALIBRATED=true;
+example defaults do not authorize operation. Read the flame-sensor setup section
+in the wiring guide. This sensor does not measure temperature.
 Drive and horizontal scanning are not implemented.
 
 Start operation by pressing the separate button on GPIO23. During homing, the
