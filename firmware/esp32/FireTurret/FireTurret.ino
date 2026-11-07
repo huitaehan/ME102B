@@ -34,13 +34,13 @@ long position=0, target=0;
 float distanceM=0, confidence=0;
 char input[96]; size_t inputLength=0; bool dropping=false;
 
-// SERVICE FUNCTION
+// SERVICE FUNCTION: Turn the water pump on or off.
 void pump(bool on) { digitalWrite(PUMP_PIN, (on==PUMP_ACTIVE_HIGH)?HIGH:LOW); }
 
-// SERVICE FUNCTION
+// SERVICE FUNCTION: Stop the turret from moving.
 void stopMotion() { target=position; }
 
-// SERVICE FUNCTION
+// SERVICE FUNCTION: Change the state and turn the pump off.
 void transition(State next) {
   pump(false); stopMotion(); state=next; entered=millis(); aimSet=false;
   if(next==HOMING) homed=false;
@@ -49,26 +49,26 @@ void transition(State next) {
   Serial.printf("STATE,%d\n",int(next));
 }
 
-// EVENT CHECKER
+// EVENT CHECKER: Read the start button and filter out bouncing.
 void checkStartButton() {
   bool pressed=digitalRead(START_PIN)==LOW;
   if(pressed!=startRaw) { startRaw=pressed; startChanged=millis(); }
   if(millis()-startChanged>=30) startStable=startRaw;
 }
 
-// EVENT CHECKER
+// EVENT CHECKER: Check if the start button was pressed again.
 bool startButtonPressed() {
   return releasedBeforeStart && startStable && !previousStart;
 }
 
-// EVENT CHECKER
+// EVENT CHECKER: Check if the turret reached the 90-degree limit switch.
 void checkLimitSwitch() {
   bool pressed=digitalRead(HOME_PIN)==LOW;
   if(pressed!=switchRaw) { switchRaw=pressed; switchChanged=millis(); }
   if(millis()-switchChanged>=30) switchStable=switchRaw;
 }
 
-// EVENT CHECKER
+// EVENT CHECKER: Read a camera message or a start/stop command.
 void acceptLine(char *line) {
   if(!strcmp(line,"STOP")) { transition(FAULT); return; }
   if(!strcmp(line,"START")) {
@@ -83,7 +83,7 @@ void acceptLine(char *line) {
   haveVision=true; lastVision=millis(); ++frameId;
 }
 
-// EVENT CHECKER
+// EVENT CHECKER: Check for new messages from the Raspberry Pi.
 void checkSerial() {
 
   for(int n=0;n<128 && Serial.available();++n) {
@@ -99,22 +99,22 @@ void checkSerial() {
   }
 }
 
-// EVENT CHECKER
+// EVENT CHECKER: Check if the camera data is recent.
 bool visionFresh() { return haveVision && millis()-lastVision<VISION_TIMEOUT_MS; }
 
-// EVENT CHECKER
+// EVENT CHECKER: Check if the camera detects fire.
 bool targetVisible() { return visionFresh() && fire; }
 
-// EVENT CHECKER
+// EVENT CHECKER: Check if the fire is within shooting range.
 bool targetInRange() { return distanceM>=MIN_RANGE_M && distanceM<=MAX_RANGE_M; }
 
-// EVENT CHECKER
+// EVENT CHECKER: Check if all requested motor steps are finished.
 bool motionDone() { return position==target && !pulseHigh; }
 
-// EVENT CHECKER
+// EVENT CHECKER: Check if the timer has finished.
 bool elapsed(uint32_t ms) { return millis()-entered>=ms; }
 
-// SERVICE FUNCTION
+// SERVICE FUNCTION: Send step pulses to move the turret motor.
 void serviceStepper() {
   uint32_t now=micros();
   if(pulseHigh) {
@@ -135,10 +135,10 @@ void serviceStepper() {
   if(!home) position+=towardHome?-1:1;
 }
 
-// SERVICE FUNCTION
+// SERVICE FUNCTION: Set the angle the nozzle should point to.
 void aimAt(float angle) { target=lroundf((90.0f-angle)*STEPS_PER_DEGREE); }
 
-// SERVICE FUNCTION
+// SERVICE FUNCTION: Calculate the nozzle angle needed to reach the fire.
 bool calculateAngle(float range,float &degrees) {
   if(!CALIBRATED || JET_SPEED_M_S<=0 || range<=0) return false;
   const float g=9.81f, v2=JET_SPEED_M_S*JET_SPEED_M_S;
@@ -148,13 +148,13 @@ bool calculateAngle(float range,float &degrees) {
   return isfinite(degrees) && degrees>=MIN_ANGLE && degrees<=MAX_ANGLE;
 }
 
-// SERVICE FUNCTION
+// SERVICE FUNCTION: Leave driving blank until the drive system is added.
 void serviceDrive() {   }
 
-// SERVICE FUNCTION
+// SERVICE FUNCTION: Leave physical scanning blank; the camera looks for fire.
 void serviceSearch() {   }
 
-// SERVICE FUNCTION
+// SERVICE FUNCTION: Run the current state and decide which state comes next.
 void serviceStateMachine() {
   if(!startRaw && !startStable) releasedBeforeStart=true;
   switch(state) {
@@ -223,7 +223,7 @@ void serviceStateMachine() {
   previousStart=startStable;
 }
 
-// SERVICE FUNCTION
+// SERVICE FUNCTION: Set up the pins and serial connection when the ESP32 starts.
 void setup() {
   pinMode(PUMP_PIN,OUTPUT); pump(false);
   pinMode(STEP_PIN,OUTPUT); digitalWrite(STEP_PIN,LOW);
@@ -236,7 +236,7 @@ void setup() {
   Serial.println("WAIT_START: press the separate start button.");
 }
 
-// SERVICE FUNCTION
+// SERVICE FUNCTION: Keep checking inputs and running the state machine and motor.
 void loop() {
   checkSerial(); checkStartButton(); checkLimitSwitch(); serviceStateMachine(); serviceStepper();
 }
