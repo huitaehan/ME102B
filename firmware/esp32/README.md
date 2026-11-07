@@ -86,7 +86,7 @@ logic. Both are explicitly labeled with comments in the Arduino sketch.
 | 3 | Characterize | Use camera distance and filtered analog infrared readings; no temperature measurement is available. | Only camera fire supported by calibrated infrared detection advances: within 0.10–2.00 m enters Calculate & aim; outside that range enters Drive. Otherwise remain here to recheck with pump off. Missing or stale fire returns to Search. |
 | 4 | Drive | Keep pump off. Drive service is a placeholder and commands no rover movement. | A fresh in-range target returns to Characterize. Missing or stale fire returns to Search. Otherwise remain here. |
 | 5 | Calculate & aim | Calculate the low-angle trajectory and command elevation stepper movement. | Completed commanded motion enters Shoot and turns on the pump. Missing calibration or invalid trajectory enters Fault. Target loss returns to Search; lost infrared support returns to Characterize; out-of-range fire enters Drive. |
-| 6 | Shoot | Pump on for at most three seconds. | Three-second timer expiration enters Fire check. Missing, stale, out-of-range fire or lost infrared support can enter Fire check earlier. Every exit turns the pump off. |
+| 6 | Shoot | Pump on for at most three seconds. | Three-second timer expiration enters Fire check. Missing, stale, or out-of-range camera fire can enter Fire check earlier. Infrared loss does not interrupt an active shot. Every exit turns the pump off. |
 | 7 | Fire check | Pump off; settle for 500 ms, then evaluate new camera frames. | Fresh fire returns to Characterize. Fresh no-fire frames and clear infrared readings spanning two seconds return to Search. Invalid/stale infrared data or stale camera data enters Fault. Infrared-only detection keeps checking with the pump off. |
 | 8 | Fault | Pump off; disable stepper driver. | Reset the ESP32 to return to Wait for start, then press the button to home again. |
 
@@ -169,3 +169,8 @@ frames. Camera fire returns to Characterize; infrared-only detection keeps the
 pump off in Fire check. Only fresh no-fire frames spanning two seconds while
 infrared remains clear return to Search. The Pi protocol FIRE messages are unchanged;
 the analog sensor is read locally by the ESP32, and FLAME reports are sent back.
+
+Infrared confirmation is required before shooting, but is ignored during the
+active Shoot state because water may disturb the reading. The three-second timer,
+camera conditions, and STOP still apply. Infrared is evaluated again in Fire check
+after the settling interval.

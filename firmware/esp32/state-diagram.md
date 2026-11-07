@@ -40,7 +40,7 @@ stateDiagram-v2
         Aim --> Drive: Fire outside range
         Aim --> Search: Fire absent or data stale
         Shoot --> Check: 3 seconds elapsed / pump OFF
-        Shoot --> Check: Fire absent, out of range, data stale, or IR lost / pump OFF
+        Shoot --> Check: Camera fire absent, out of range, or data stale / pump OFF
         Check --> Characterize: Fresh fire after 500 ms settling
         Check --> Search: Fresh no-fire frames and IR clear span 2 seconds after settling
         Check --> Fault: Camera stale or infrared data not ready
@@ -87,3 +87,6 @@ stateDiagram-v2
 - GPIO34 samples analog infrared intensity; it does not measure temperature.
 - The average uses eight samples at 20 ms intervals, with calibrated hysteresis.
   IR-only detection in Fire check keeps the pump off and resets the clear timer.
+
+- Infrared loss does not interrupt Shoot. It is used before firing and again
+  during Fire check after settling; camera conditions and STOP still apply.

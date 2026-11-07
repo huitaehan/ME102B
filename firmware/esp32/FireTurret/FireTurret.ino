@@ -253,7 +253,7 @@ void serviceStateMachine() {
       break;
     case SHOOT:
 
-      if(!visionFresh() || !fire || !targetInRange() || !flameConfirmed()) transition(FIRE_CHECK);
+      if(!visionFresh() || !fire || !targetInRange()) transition(FIRE_CHECK);
       else if(elapsed(SHOOT_MS)) transition(FIRE_CHECK);
       break;
     case FIRE_CHECK:
