@@ -4,6 +4,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+constexpr bool DEMO_MODE=true;
+constexpr uint32_t DEMO_MOTION_MS=1000, DEMO_FRAME_MS=100;
+
 constexpr int STEP_PIN=25, DIR_PIN=26, ENABLE_PIN=27;
 constexpr int START_PIN=23, HOME_PIN=33, PUMP_PIN=32;
 constexpr int FLAME_PIN=34;
@@ -42,10 +45,13 @@ int flameSamples[FLAME_SAMPLE_COUNT]={};
 int flameIndex=0, flameCount=0, flameTotal=0, flameAverage=0;
 bool infraredFire=false;
 uint32_t lastFlameSample=0, lastFlameReport=0;
+bool demoCamera=false, demoFire=false;
+float demoDistanceM=0.8f;
+uint32_t demoLastFrame=0, demoMotionStarted=0;
 char input[96]; size_t inputLength=0; bool dropping=false;
 
 // SERVICE FUNCTION: Turn the water pump on or off.
-void pump(bool on) { digitalWrite(PUMP_PIN, (on==PUMP_ACTIVE_HIGH)?HIGH:LOW); }
+void pump(bool on) { digitalWrite(PUMP_PIN, ((on && !DEMO_MODE)==PUMP_ACTIVE_HIGH)?HIGH:LOW); }
 
 // SERVICE FUNCTION: Stop the turret from moving.
 void stopMotion() { target=position; }
@@ -57,6 +63,15 @@ void transition(State next) {
   if(next==FIRE_CHECK) { checkFrame=frameId; checkSawFrame=false; clearSince=0; }
   if(next==FAULT) digitalWrite(ENABLE_PIN,HIGH);
   Serial.printf("STATE,%d\n",int(next));
+  if(DEMO_MODE) {
+    const char *names[]={"Wait for start","Homing","Search","Characterize","Drive",
+                         "Calculate & aim","Shoot","Fire check","Fault"};
+    Serial.printf("DEMO STATE: %s\n",names[int(next)]);
+    if(next==HOMING) Serial.println("DEMO ACTION: motor disabled; press the real home switch.");
+    if(next==DRIVE) Serial.println("DEMO ACTION: driving is not implemented.");
+    if(next==SHOOT) Serial.println("DEMO ACTION: pump ON simulated; physical pump stays OFF.");
+    else Serial.println("DEMO ACTION: pump OFF; actuator outputs disabled.");
+  }
 }
 
 // EVENT CHECKER: Read the start button and filter out bouncing.
@@ -85,10 +100,19 @@ void acceptLine(char *line) {
     if(ALLOW_SERIAL_START && state==WAIT_START) transition(HOMING);
     return;
   }
+  if(DEMO_MODE && (!strcmp(line,"SIM_NEAR") || !strcmp(line,"SIM_FAR") ||
+                   !strcmp(line,"SIM_CLEAR") || !strcmp(line,"SIM_OFF"))) {
+    demoCamera=strcmp(line,"SIM_OFF")!=0;
+    demoFire=strcmp(line,"SIM_CLEAR")!=0;
+    demoDistanceM=!strcmp(line,"SIM_FAR")?3.0f:0.8f;
+    Serial.printf("DEMO CAMERA: %s (simulated input)\n",line);
+    return;
+  }
   int detected=-1, consumed=0; float d=0,c=0;
   if(sscanf(line,"FIRE,%d,%f,%f%n",&detected,&d,&c,&consumed)!=3 || line[consumed]) return;
   if((detected!=0 && detected!=1) || !isfinite(d) || !isfinite(c) || c<0 || c>1) return;
   if(detected && (d<=0 || c<=0.40f)) return;
+  demoCamera=false;
   fire=detected; distanceM=d; confidence=c;
   haveVision=true; lastVision=millis(); ++frameId;
 }
@@ -107,6 +131,14 @@ void checkSerial() {
       else dropping=true;
     }
   }
+}
+
+// SERVICE FUNCTION: Send simulated camera frames only when demo commands enable them.
+void serviceDemoCamera() {
+  if(!DEMO_MODE || !demoCamera || millis()-demoLastFrame<DEMO_FRAME_MS) return;
+  demoLastFrame=millis();
+  fire=demoFire; distanceM=demoDistanceM; confidence=demoFire?0.9f:0.0f;
+  haveVision=true; lastVision=millis(); ++frameId;
 }
 
 // EVENT CHECKER: Check if the camera data is recent.
@@ -166,6 +198,12 @@ bool elapsed(uint32_t ms) { return millis()-entered>=ms; }
 
 // SERVICE FUNCTION: Send step pulses to move the turret motor.
 void serviceStepper() {
+  if(DEMO_MODE) {
+    digitalWrite(STEP_PIN,LOW); digitalWrite(ENABLE_PIN,HIGH); pulseHigh=false;
+    if(homed && state!=HOMING && state!=FAULT && millis()-demoMotionStarted>=DEMO_MOTION_MS)
+      position=target;
+    return;
+  }
   uint32_t now=micros();
   if(pulseHigh) {
     if(uint32_t(now-pulseStarted)>=PULSE_US) { digitalWrite(STEP_PIN,LOW); pulseHigh=false; }
@@ -186,10 +224,21 @@ void serviceStepper() {
 }
 
 // SERVICE FUNCTION: Set the angle the nozzle should point to.
-void aimAt(float angle) { target=lroundf((90.0f-angle)*STEPS_PER_DEGREE); }
+void aimAt(float angle) {
+  target=lroundf((90.0f-angle)*STEPS_PER_DEGREE);
+  if(DEMO_MODE) {
+    demoMotionStarted=millis();
+    Serial.printf("DEMO ACTION: simulate nozzle aiming to %.1f degrees for 1 second.\n",angle);
+  }
+}
 
 // SERVICE FUNCTION: Calculate the nozzle angle needed to reach the fire.
 bool calculateAngle(float range,float &degrees) {
+  if(DEMO_MODE) {
+    degrees=45.0f;
+    Serial.println("DEMO ACTION: use simulated 45-degree aim; trajectory calibration bypassed.");
+    return range>0 && degrees>=MIN_ANGLE && degrees<=MAX_ANGLE;
+  }
   if(!CALIBRATED || JET_SPEED_M_S<=0 || range<=0) return false;
   const float g=9.81f, v2=JET_SPEED_M_S*JET_SPEED_M_S;
   float discriminant=v2*v2-g*(g*range*range+2*TARGET_HEIGHT_M*v2);
@@ -281,16 +330,21 @@ void setup() {
   pinMode(PUMP_PIN,OUTPUT); pump(false);
   pinMode(STEP_PIN,OUTPUT); digitalWrite(STEP_PIN,LOW);
   pinMode(DIR_PIN,OUTPUT); pinMode(ENABLE_PIN,OUTPUT);
-  digitalWrite(ENABLE_PIN,LOW); pinMode(HOME_PIN,INPUT_PULLUP);
+  digitalWrite(ENABLE_PIN,DEMO_MODE?HIGH:LOW); pinMode(HOME_PIN,INPUT_PULLUP);
   pinMode(START_PIN,INPUT_PULLUP);
   pinMode(FLAME_PIN,INPUT); analogReadResolution(12);
   startRaw=startStable=previousStart=(digitalRead(START_PIN)==LOW);
   releasedBeforeStart=!startRaw; startChanged=millis();
   Serial.begin(115200); entered=millis();
+  if(DEMO_MODE) {
+    Serial.println("DEMO MODE - actuator outputs disabled. Real flame calibration still required.");
+    Serial.println("DEMO COMMANDS: SIM_NEAR, SIM_FAR, SIM_CLEAR, SIM_OFF, STOP");
+    Serial.println("DEMO STATE: Wait for start");
+  }
   Serial.println("WAIT_START: press the separate start button.");
 }
 
 // SERVICE FUNCTION: Keep checking inputs and running the state machine and motor.
 void loop() {
-  serviceFlameSensor(); checkSerial(); checkStartButton(); checkLimitSwitch(); serviceStateMachine(); serviceStepper(); reportFlameSensor();
+  serviceFlameSensor(); checkSerial(); serviceDemoCamera(); checkStartButton(); checkLimitSwitch(); serviceStateMachine(); serviceStepper(); reportFlameSensor();
 }

@@ -4,6 +4,14 @@ Open `FireTurret/FireTurret.ino` in Arduino IDE. Install the Espressif ESP32
 board package and select your actual ESP32 board and USB port. No extra Arduino
 libraries are used. This is configurable firmware, not hardware-validated code.
 
+## Sensor-only demo
+
+`DEMO_MODE=true` is the current default. It disables actuator outputs and simulates
+trajectory/aiming while preserving real switch and analog sensor checks. Follow
+[DEMO.md](DEMO.md) for setup and recording instructions. The state diagram describes
+the normal control flow; simulated camera/motion events are explicitly labeled in
+the demo. Real actuator behavior below requires `DEMO_MODE=false` and calibration.
+
 ## Example wiring (classic ESP32 DevKit)
 
 | Signal | GPIO | Connection |

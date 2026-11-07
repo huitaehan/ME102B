@@ -24,6 +24,13 @@ assets/
   sample_fire.jpg               Sample image
 ```
 
+## Sensor-only demo
+
+The sketch defaults to `DEMO_MODE=true`: physical motor and pump outputs are disabled,
+while real buttons and the calibrated analog flame sensor still operate. See the
+[demo instructions](firmware/esp32/DEMO.md) for Serial Monitor commands and a recording
+sequence. Set `DEMO_MODE=false` and finish calibration for actual actuation.
+
 ## ESP32 firmware
 
 Open [FireTurret.ino](firmware/esp32/FireTurret/FireTurret.ino) in Arduino IDE.
