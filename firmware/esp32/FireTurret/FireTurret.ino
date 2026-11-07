@@ -44,6 +44,7 @@ void stopMotion() { target=position; }
 // SERVICE FUNCTION: change state, stop outputs, reset timers, and report the state.
 void transition(State next) {
   pump(false); stopMotion(); state=next; entered=millis(); aimSet=false;
+  if(next==HOMING) homed=false; // Re-establish the absolute home reference.
   if(next==FIRE_CHECK) { checkFrame=frameId; checkSawFrame=false; clearSince=0; }
   if(next==FAULT) digitalWrite(ENABLE_PIN,HIGH);
   Serial.printf("STATE,%d\n",int(next));
@@ -53,6 +54,11 @@ void checkStartButton() {
   bool pressed=digitalRead(START_PIN)==LOW;
   if(pressed!=startRaw) { startRaw=pressed; startChanged=millis(); }
   if(millis()-startChanged>=30) startStable=startRaw;
+}
+// EVENT CHECKER: one event per debounced press, after release since boot.
+// previousStart is updated every loop, including states that ignore the button.
+bool startButtonPressed() {
+  return releasedBeforeStart && startStable && !previousStart;
 }
 // EVENT CHECKER: debounce the 90-degree homing switch.
 void checkLimitSwitch() {
@@ -145,12 +151,12 @@ void serviceSearch() { /* YOLO scans frames; no rover motion implemented. */ }
 // EVENT CHECKER functions report conditions; SERVICE FUNCTIONs perform actions.
 // Some switch/frame conditions are checked inline below and labeled explicitly.
 void serviceStateMachine() {
+  if(!startRaw && !startStable) releasedBeforeStart=true;
   switch(state) {
     case WAIT_START:
       // EVENT CHECKER (inline): start button released, then a new debounced press.
       // The home switch never starts the machine. A held button at boot must release.
-      if(!startRaw && !startStable) releasedBeforeStart=true;
-      if(releasedBeforeStart && startStable && !previousStart) transition(HOMING);
+      if(startButtonPressed()) transition(HOMING);
       break;
     case HOMING:
       // EVENT CHECKERS: home switch reached, or homing timer expired.
@@ -162,6 +168,9 @@ void serviceStateMachine() {
       } else if(elapsed(HOMING_TIMEOUT_MS)) transition(FAULT);
       break;
     case SEARCH:
+      // EVENT CHECKER: a new button press requests re-homing, including during back-off.
+      // SERVICE: transition stops motion/pump before homing; ignore held presses.
+      if(startButtonPressed()) { transition(HOMING); break; }
       // SERVICE: monitor camera search. EVENTS: back-off done, switch state, fire.
       serviceSearch();
       if(motionDone() && switchStable) { transition(FAULT); break; }

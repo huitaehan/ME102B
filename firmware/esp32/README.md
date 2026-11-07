@@ -81,7 +81,7 @@ logic. Both are explicitly labeled with comments in the Arduino sketch.
 |---|---|---|---|
 | 0 | Wait for start | Keep pump off; monitor separate start button on GPIO23. | A new debounced button press enters Homing. A button held at boot must first be released. The home switch cannot start the machine. |
 | 1 | Homing | Move toward the limit switch at 90 degrees above ground. When reached, record zero steps as the 90-degree reference. | Debounced limit-switch contact enters Search and commands back-off to 85 degrees. Failure to reach the switch within 15 seconds enters Fault. |
-| 2 | Search | Complete switch back-off; monitor fresh YOLO observations. No physical scanning is implemented. | After back-off, fresh fire enters Characterize. A switch still pressed after back-off enters Fault. Otherwise remain in Search. |
+| 2 | Search | Complete switch back-off; monitor fresh YOLO observations. No physical scanning is implemented. | After back-off, fresh fire enters Characterize. A switch still pressed after back-off enters Fault. A new start-button press stops motion and re-enters Homing, including during back-off. Otherwise remain in Search. |
 | 3 | Characterize | Use the camera's estimated distance; no temperature measurement is available. | Fresh fire within 0.10–2.00 m enters Calculate & aim; outside that range enters Drive. Missing or stale fire returns to Search. |
 | 4 | Drive | Keep pump off. Drive service is a placeholder and commands no rover movement. | A fresh in-range target returns to Characterize. Missing or stale fire returns to Search. Otherwise remain here. |
 | 5 | Calculate & aim | Calculate the low-angle trajectory and command elevation stepper movement. | Completed commanded motion enters Shoot and turns on the pump. Missing calibration or invalid trajectory enters Fault. Target loss returns to Search; out-of-range fire enters Drive. |
@@ -114,3 +114,17 @@ Validation in the cloud can check logic and syntax, but flashing, switch directi
 stepper travel, camera inference, distance calibration, and pumping require the
 physical hardware. Take the requested full-code screenshots in Arduino IDE after
 configuring and compiling for your actual board.
+
+## Re-homing and physical power
+
+A new debounced start-button press in Search restarts Homing. Holding the button
+through the first homing sequence does not trigger another cycle. Button presses
+in other active states are ignored and are not queued for later. Serial START
+remains a bench-test option in Wait for start only.
+
+Physical power removal is not a software state. A master switch must remove power
+from the relevant ESP32, pump, and motor supplies. Powering off only the ESP32 is
+not equivalent to disconnecting the actuator supplies. When power is restored,
+firmware initializes in Wait for start and requires a new button press and homing.
+Hardware must hold the pump control inactive while the ESP32 is unpowered/reset.
+See [the updated state diagram](state-diagram.md).
