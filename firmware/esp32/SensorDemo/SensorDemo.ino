@@ -25,6 +25,8 @@ constexpr uint32_t SHOOT_MS=3000, SETTLE_MS=500, CLEAR_MS=2000;
 enum State { WAIT_START, HOMING, SEARCH, CHARACTERIZE, DRIVE,
              CALCULATE_AIM, SHOOT, FIRE_CHECK, FAULT };
 State state=WAIT_START;
+const char *STATE_NAMES[]={"Wait for start","Homing","Search","Characterize","Drive",
+                           "Calculate & aim","Shoot","Fire check","Fault"};
 uint32_t entered=0, lastVision=0, frameId=0, checkFrame=0;
 uint32_t switchChanged=0, clearSince=0;
 bool pulseHigh=false, homed=false, fire=false, haveVision=false;
@@ -55,14 +57,16 @@ void stopMotion() { target=position; }
 
 // SERVICE FUNCTION: Change the state and turn the pump off.
 void transition(State next) {
+  State previousState=state;
   reportPump(false); stopMotion(); state=next; entered=millis(); aimSet=false;
   if(next==HOMING) homed=false;
   if(next==FIRE_CHECK) { checkFrame=frameId; checkSawFrame=false; clearSince=0; }
   Serial.printf("STATE,%d\n",int(next));
+  Serial.printf("STATE CHANGE: %d %s -> %d %s | start=%s home=%s\n",
+    int(previousState),STATE_NAMES[int(previousState)],int(next),STATE_NAMES[int(next)],
+    startStable?"ON":"OFF",switchStable?"PRESSED":"RELEASED");
   if(DEMO_MODE) {
-    const char *names[]={"Wait for start","Homing","Search","Characterize","Drive",
-                         "Calculate & aim","Shoot","Fire check","Fault"};
-    Serial.printf("DEMO STATE: %s\n",names[int(next)]);
+    Serial.printf("DEMO STATE: %s\n",STATE_NAMES[int(next)]);
     if(next==HOMING) Serial.println("DEMO ACTION: motor disabled; press the real home switch.");
     if(next==DRIVE) Serial.println("DEMO ACTION: driving is not implemented.");
     if(next==SHOOT) Serial.println("DEMO ACTION: pump ON simulated; physical pump stays OFF.");
@@ -74,7 +78,11 @@ void transition(State next) {
 void checkStartButton() {
   bool pressed=digitalRead(START_PIN)==LOW;
   if(pressed!=startRaw) { startRaw=pressed; startChanged=millis(); }
-  if(millis()-startChanged>=30) startStable=startRaw;
+  if(millis()-startChanged>=30 && startStable!=startRaw) {
+    startStable=startRaw;
+    Serial.printf("SWITCH CHANGE: start=%s | state=%d %s\n",
+      startStable?"ON":"OFF",int(state),STATE_NAMES[int(state)]);
+  }
 }
 
 // EVENT CHECKER: Check if the start button was pressed again.
@@ -86,7 +94,11 @@ bool startButtonPressed() {
 void checkLimitSwitch() {
   bool pressed=digitalRead(HOME_PIN)==LOW;
   if(pressed!=switchRaw) { switchRaw=pressed; switchChanged=millis(); }
-  if(millis()-switchChanged>=30) switchStable=switchRaw;
+  if(millis()-switchChanged>=30 && switchStable!=switchRaw) {
+    switchStable=switchRaw;
+    Serial.printf("SWITCH CHANGE: home=%s | state=%d %s\n",
+      switchStable?"PRESSED":"RELEASED",int(state),STATE_NAMES[int(state)]);
+  }
 }
 
 // EVENT CHECKER: Read a camera message or a start/stop command.
@@ -179,12 +191,13 @@ bool flameSensorReady() {
 // EVENT CHECKER: Check if the infrared reading supports the camera detection.
 bool flameConfirmed() { return flameSensorReady() && infraredFire; }
 
-// SERVICE FUNCTION: Print analog readings so the flame threshold can be calibrated.
+// SERVICE FUNCTION: Print the current state, switches, and analog flame readings.
 void reportFlameSensor() {
   if(millis()-lastFlameReport<500) return;
   lastFlameReport=millis();
-  Serial.printf("INPUTS: start=%d home=%d analog=%d ready=%d confirmed=%d\n",
-    int(startStable),int(switchStable),flameAverage,int(flameSensorReady()),int(flameConfirmed()));
+  Serial.printf("STATUS: state=%d %s | start=%s home=%s | analog=%d ready=%d confirmed=%d\n",
+    int(state),STATE_NAMES[int(state)],startStable?"ON":"OFF",switchStable?"PRESSED":"RELEASED",
+    flameAverage,int(flameSensorReady()),int(flameConfirmed()));
 }
 
 // EVENT CHECKER: Check if all requested motor steps are finished.

@@ -12,8 +12,10 @@ unplugged for the initial boot check. Use Serial Monitor at 115200 baud, Newline
 Opening then closing the latching start switch requests Homing. Opening it does
 not stop operation or remove power. Trigger/release Home to reach Search.
 
-Every 500 ms INPUTS shows start/home (1=closed), analog average, calibration
-readiness, and infrared confirmation. Calibrate the real analog sensor as described
+Every 500 ms STATUS shows the numbered/named state, start ON/OFF, home
+PRESSED/RELEASED, analog average, calibration readiness, and infrared confirmation.
+SWITCH CHANGE reports debounced switch edges; STATE CHANGE reports the previous
+and new states alongside both switch positions. Existing STATE,<number> lines remain. Calibrate the real analog sensor as described
 below before expecting Characterize to advance. SIM_NEAR/FAR/CLEAR/OFF optionally
 simulate camera frames; aiming and pumping are printed simulations only.
 The full state-machine sequence and timers follow the guide below; actuator GPIO
