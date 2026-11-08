@@ -116,3 +116,24 @@ A latching start switch works between GPIO23 and GND: open it, then close it to
 start. A closed switch at boot must first be opened. Opening it is not a stop or
 power-off command. The complete diagnostic sketch includes setup(), loop(),
 all state-machine functions, and all global variables; open/copy the entire file.
+
+## Simulated analog flame input
+
+SensorDemo starts with the real analog input. Send `SIM_FLAME` to select an
+explicitly simulated analog source: 3 seconds around 600 ADC counts, a 4-second
+rise to 3200, 8 seconds around 3200, a 3-second fall, then remain around 600.
+Small pseudorandom variations of +/-50 counts are added. Repeating SIM_FLAME
+restarts the timing. STATUS labels the source as SIMULATED or REAL.
+
+The simulated source uses fixed rising thresholds 2400/2000 and does not require
+real sensor calibration. It never changes FLAME_CALIBRATED. REAL_FLAME restores
+real analogRead and the real calibration requirements. Switching sources clears
+the averaging buffer, and eight new samples must arrive before readiness.
+
+For the demo, home with the physical switches, send SIM_NEAR, then SIM_FLAME.
+Characterize advances when the simulated IR reading reaches its threshold.
+Send SIM_FAR instead to demonstrate Drive. Send SIM_CLEAR and wait for simulated
+IR to fall/clear to demonstrate Fire check -> Search. Simulated flame readings do
+not themselves clear the camera; SIM_NEAR remains active until changed.
+This is software simulation, not evidence of a working analog sensor. Disclose
+it in the video and confirm instructor acceptance for the analog-sensor requirement.

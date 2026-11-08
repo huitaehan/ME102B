@@ -41,6 +41,8 @@ int flameIndex=0, flameCount=0, flameTotal=0, flameAverage=0;
 bool infraredFire=false;
 uint32_t lastFlameSample=0, lastFlameReport=0;
 bool demoCamera=false, demoFire=false;
+bool simulatedFlame=false;
+uint32_t simulatedFlameStarted=0, simulatedNoise=12345;
 float demoDistanceM=0.8f;
 uint32_t demoLastFrame=0, demoMotionStarted=0;
 char input[96]; size_t inputLength=0; bool dropping=false;
@@ -103,6 +105,15 @@ void checkLimitSwitch() {
 
 // EVENT CHECKER: Read a camera message or a start/stop command.
 void acceptLine(char *line) {
+  if(!strcmp(line,"SIM_FLAME") || !strcmp(line,"REAL_FLAME")) {
+    simulatedFlame=!strcmp(line,"SIM_FLAME"); simulatedFlameStarted=millis();
+    flameTotal=0; flameIndex=0; flameCount=0; infraredFire=false;
+    for(int i=0;i<FLAME_SAMPLE_COUNT;++i) flameSamples[i]=0;
+    Serial.println(simulatedFlame?
+      "FLAME SOURCE: SIMULATED - low 3s, rise 4s, high 8s, fall 3s, then low.":
+      "FLAME SOURCE: REAL SENSOR - measured calibration required.");
+    return;
+  }
   if(!strcmp(line,"STOP")) { transition(FAULT); return; }
   if(!strcmp(line,"START")) {
     if(ALLOW_SERIAL_START && state==WAIT_START) transition(HOMING);
@@ -158,23 +169,38 @@ bool targetVisible() { return visionFresh() && fire; }
 // EVENT CHECKER: Check if the fire is within shooting range.
 bool targetInRange() { return distanceM>=MIN_RANGE_M && distanceM<=MAX_RANGE_M; }
 
+// SERVICE FUNCTION: Create a timed simulated flame reading with small random variations.
+int readFlameInput() {
+  if(!simulatedFlame) return analogRead(FLAME_PIN);
+  uint32_t t=millis()-simulatedFlameStarted;
+  int level=600;
+  if(t>=3000 && t<7000) level=600+int((t-3000)*2600/4000);
+  else if(t>=7000 && t<15000) level=3200;
+  else if(t>=15000 && t<18000) level=3200-int((t-15000)*2600/3000);
+  simulatedNoise=1664525u*simulatedNoise+1013904223u;
+  return level+int((simulatedNoise>>16)%101)-50;
+}
+
 // SERVICE FUNCTION: Read and average the analog flame sensor without waiting.
 void serviceFlameSensor() {
   uint32_t now=millis();
   if(now-lastFlameSample<FLAME_SAMPLE_MS) return;
   lastFlameSample=now;
   flameTotal-=flameSamples[flameIndex];
-  flameSamples[flameIndex]=analogRead(FLAME_PIN);
+  flameSamples[flameIndex]=readFlameInput();
   flameTotal+=flameSamples[flameIndex];
   flameIndex=(flameIndex+1)%FLAME_SAMPLE_COUNT;
   if(flameCount<FLAME_SAMPLE_COUNT) ++flameCount;
   flameAverage=flameTotal/flameCount;
-  if(FLAME_HIGH_MEANS_FIRE) {
-    if(flameAverage>=FLAME_ON_THRESHOLD) infraredFire=true;
-    else if(flameAverage<=FLAME_OFF_THRESHOLD) infraredFire=false;
+  bool highMeansFire=simulatedFlame || FLAME_HIGH_MEANS_FIRE;
+  int onThreshold=simulatedFlame?2400:FLAME_ON_THRESHOLD;
+  int offThreshold=simulatedFlame?2000:FLAME_OFF_THRESHOLD;
+  if(highMeansFire) {
+    if(flameAverage>=onThreshold) infraredFire=true;
+    else if(flameAverage<=offThreshold) infraredFire=false;
   } else {
-    if(flameAverage<=FLAME_ON_THRESHOLD) infraredFire=true;
-    else if(flameAverage>=FLAME_OFF_THRESHOLD) infraredFire=false;
+    if(flameAverage<=onThreshold) infraredFire=true;
+    else if(flameAverage>=offThreshold) infraredFire=false;
   }
 }
 
@@ -184,7 +210,7 @@ bool flameSensorReady() {
     FLAME_OFF_THRESHOLD>=0 && FLAME_OFF_THRESHOLD<=4095 &&
     (FLAME_HIGH_MEANS_FIRE ? FLAME_ON_THRESHOLD>FLAME_OFF_THRESHOLD :
                             FLAME_ON_THRESHOLD<FLAME_OFF_THRESHOLD);
-  return FLAME_CALIBRATED && thresholdsValid && flameCount==FLAME_SAMPLE_COUNT &&
+  return (simulatedFlame || (FLAME_CALIBRATED && thresholdsValid)) && flameCount==FLAME_SAMPLE_COUNT &&
     millis()-lastFlameSample<FLAME_TIMEOUT_MS;
 }
 
@@ -195,9 +221,9 @@ bool flameConfirmed() { return flameSensorReady() && infraredFire; }
 void reportFlameSensor() {
   if(millis()-lastFlameReport<500) return;
   lastFlameReport=millis();
-  Serial.printf("STATUS: state=%d %s | start=%s home=%s | analog=%d ready=%d confirmed=%d\n",
+  Serial.printf("STATUS: state=%d %s | start=%s home=%s | analog=%d ready=%d confirmed=%d source=%s\n",
     int(state),STATE_NAMES[int(state)],startStable?"ON":"OFF",switchStable?"PRESSED":"RELEASED",
-    flameAverage,int(flameSensorReady()),int(flameConfirmed()));
+    flameAverage,int(flameSensorReady()),int(flameConfirmed()),simulatedFlame?"SIMULATED":"REAL");
 }
 
 // EVENT CHECKER: Check if all requested motor steps are finished.
@@ -320,6 +346,7 @@ void setup() {
   startRaw=startStable=previousStart=(digitalRead(START_PIN)==LOW);
   releasedBeforeStart=!startRaw; startChanged=millis(); entered=millis();
   Serial.println("SIMULATED CAMERA: SIM_NEAR, SIM_FAR, SIM_CLEAR, SIM_OFF; STOP enters Fault.");
+  Serial.println("FLAME COMMANDS: SIM_FLAME starts a simulated rise/fall; REAL_FLAME restores the sensor.");
   Serial.println("WAIT_START: open the start switch, then close it to start.");
 }
 
