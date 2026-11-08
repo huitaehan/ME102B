@@ -22,8 +22,7 @@ constexpr bool CALIBRATED=false;
 constexpr float STEPS_PER_DEGREE=200.0f*16.0f/360.0f;
 constexpr float MIN_ANGLE=5, MAX_ANGLE=85;
 constexpr float MIN_RANGE_M=0.10f, MAX_RANGE_M=2.0f;
-constexpr float JET_SPEED_M_S=0.0f;
-constexpr float TARGET_HEIGHT_M=0.0f;
+constexpr uint32_t AIM_TIMEOUT_MS=3000;
 
 constexpr uint32_t STEP_INTERVAL_US=2500, PULSE_US=5;
 constexpr uint32_t VISION_TIMEOUT_MS=1500, HOMING_TIMEOUT_MS=15000;
@@ -41,6 +40,9 @@ uint32_t startChanged=0;
 bool releasedBeforeStart=false, checkSawFrame=false, aimSet=false;
 long position=0, target=0;
 float distanceM=0, confidence=0;
+uint32_t aimRequestId=0, aimRequestedAt=0;
+bool aimPending=false;
+float aimDistanceM=0;
 int flameSamples[FLAME_SAMPLE_COUNT]={};
 int flameIndex=0, flameCount=0, flameTotal=0, flameAverage=0;
 bool infraredFire=false;
@@ -61,7 +63,7 @@ void stopMotion() { target=position; }
 
 // SERVICE FUNCTION: Change the state and turn the pump off.
 void transition(State next) {
-  pump(false); stopMotion(); state=next; entered=millis(); aimSet=false;
+  pump(false); stopMotion(); state=next; entered=millis(); aimSet=false; aimPending=false;
   if(next==HOMING) homed=false;
   if(next==FIRE_CHECK) { checkFrame=frameId; checkSawFrame=false; clearSince=0; }
   if(next==FAULT && !DEMO_MODE) digitalWrite(ENABLE_PIN,HIGH);
@@ -109,6 +111,21 @@ void acceptLine(char *line) {
     demoFire=strcmp(line,"SIM_CLEAR")!=0;
     demoDistanceM=!strcmp(line,"SIM_FAR")?3.0f:0.8f;
     Serial.printf("DEMO CAMERA: %s (simulated input)\n",line);
+    return;
+  }
+  unsigned long replyId=0; float angle=0; int used=0;
+  if(sscanf(line,"AIM_ERROR,%lu%n",&replyId,&used)==1 && !line[used]) {
+    if(state==CALCULATE_AIM && aimPending && replyId==aimRequestId) transition(FAULT);
+    return;
+  }
+  used=0;
+  if(sscanf(line,"AIM_RESULT,%lu,%f%n",&replyId,&angle,&used)==2 && !line[used]) {
+    if(state!=CALCULATE_AIM || !aimPending || replyId!=aimRequestId) return;
+    if(millis()-aimRequestedAt>=AIM_TIMEOUT_MS || !isfinite(angle) ||
+       angle<MIN_ANGLE || angle>MAX_ANGLE) { transition(FAULT); return; }
+    if(!targetVisible() || !targetInRange() || !flameConfirmed() ||
+       fabsf(distanceM-aimDistanceM)>0.05f) { transition(CHARACTERIZE); return; }
+    aimPending=false; aimAt(angle); aimSet=true;
     return;
   }
   int detected=-1, consumed=0; float d=0,c=0;
@@ -242,12 +259,7 @@ bool calculateAngle(float range,float &degrees) {
     Serial.println("DEMO ACTION: use simulated 45-degree aim; trajectory calibration bypassed.");
     return range>0 && degrees>=MIN_ANGLE && degrees<=MAX_ANGLE;
   }
-  if(!CALIBRATED || JET_SPEED_M_S<=0 || range<=0) return false;
-  const float g=9.81f, v2=JET_SPEED_M_S*JET_SPEED_M_S;
-  float discriminant=v2*v2-g*(g*range*range+2*TARGET_HEIGHT_M*v2);
-  if(discriminant<0) return false;
-  degrees=atanf((v2-sqrtf(discriminant))/(g*range))*180.0f/PI;
-  return isfinite(degrees) && degrees>=MIN_ANGLE && degrees<=MAX_ANGLE;
+  return false; // Physical trajectories are calculated by the Pi solver.
 }
 
 // SERVICE FUNCTION: Leave driving blank until the drive system is added.
@@ -296,12 +308,23 @@ void serviceStateMachine() {
       if(!targetVisible()) { transition(SEARCH); break; }
       if(!flameConfirmed()) { transition(CHARACTERIZE); break; }
       if(!targetInRange()) { transition(DRIVE); break; }
-      if(!aimSet) {
-        float angle;
-        if(!calculateAngle(distanceM,angle)) { transition(FAULT); break; }
-        aimAt(angle); aimSet=true;
+      if(!DEMO_MODE && (aimPending || aimSet) && fabsf(distanceM-aimDistanceM)>0.05f) {
+        transition(CHARACTERIZE); break;
       }
-      if(motionDone()) { transition(SHOOT); pump(true); }
+      if(!aimSet && !aimPending) {
+        if(DEMO_MODE) {
+          float angle;
+          if(!calculateAngle(distanceM,angle)) { transition(FAULT); break; }
+          aimAt(angle); aimSet=true;
+        } else {
+          if(!CALIBRATED) { transition(FAULT); break; }
+          ++aimRequestId; aimDistanceM=distanceM; aimRequestedAt=millis(); aimPending=true;
+          Serial.printf("AIM_REQUEST,%lu,%.4f,%.2f,%.2f\n",
+                        (unsigned long)aimRequestId,aimDistanceM,MIN_ANGLE,MAX_ANGLE);
+        }
+      }
+      if(aimPending && millis()-aimRequestedAt>=AIM_TIMEOUT_MS) { transition(FAULT); break; }
+      if(aimSet && motionDone()) { transition(SHOOT); pump(true); }
       break;
     case SHOOT:
 

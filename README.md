@@ -106,6 +106,51 @@ decoding also needs verification against the actual camera/model.
 
 ## Validation status
 
+### Pi trajectory solver integration
+
+In physical mode, `FireTurret.ino` now requests an elevation from the Pi in
+Calculate & aim. The bridge calls `Calcs and Shooting/Projectile Motion Calculation.py`;
+the ESP32 retains the state machine, sensor checks, motor control, and pump timing.
+The serpentine spray generator is not integrated; current hardware controls elevation only.
+
+Supply measured calibration when starting the bridge, for example:
+
+```sh
+python vision/fire_serial_bridge.py --port /dev/ttyUSB0 --picamera --focal-length-px 490 --jet-speed-m-s 5 --nozzle-length-m 0.10 --base-height-m 0.20 --target-height-m 0.20
+```
+
+These numbers are illustrative, not calibrated settings. All lengths are metres.
+The solver receives camera distance as `x_f`, so it must represent horizontal
+distance to the target, not slant range. `--turret-x-m` is the pivot horizontal
+offset from that distance reference. Pivot elevation is `--base-height-m` plus
+`--turret-y-m`; `--target-height-m` uses the same vertical datum.
+`--nozzle-length-m` is the pivot-to-exit length, and `--jet-speed-m-s` is measured
+exit speed. The ideal projectile model still requires experimental verification.
+
+Protocol at 115200 baud, newline terminated:
+
+```text
+Pi -> ESP32: FIRE,1,0.8000,0.9200
+ESP32 -> Pi: AIM_REQUEST,1,0.8000,5.00,85.00
+Pi -> ESP32: AIM_RESULT,1,12.3456
+or:         AIM_ERROR,1
+```
+
+The request contains ID, distance, minimum angle, and maximum angle. A response
+must match the pending ID and arrive within three seconds. Invalid angles,
+solver errors, and request timeout enter Fault. A distance change over 5 cm
+during calculation or aiming cancels the aim and returns to Characterize.
+Shooting starts only after aiming completes and the existing target/sensor checks pass.
+Inference and serial handling share one loop: slow inference can still exceed
+the existing 1.5-second camera freshness limit. There is no automatic reconnect.
+
+`DEMO_MODE=true` retains the simulated 45-degree aim and does not request the
+solver. For physical operation, set `DEMO_MODE=false`, complete mechanical and
+flame calibration, and set both calibration flags. Missing Pi jet speed produces
+`AIM_ERROR`. SensorDemo remains a separate simulation sketch.
+
+This integration has not yet been compiled or exercised with physical hardware.
+
 Firmware host logic checks covered pump timing, fire checking, vision timeout,
 homing timeout, and STOP. Python syntax and bridge distance formatting were
 checked. Compilation with the ESP32 board package, camera inference, motor

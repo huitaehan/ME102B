@@ -44,8 +44,12 @@ switch already being pressed when homing begins establishes home immediately.
 Serial START is disabled by default; ALLOW_SERIAL_START can enable it for bench
 tests. Home is an absolute 90-degree elevation, not a relative 90-degree move.
 
-Measure jet exit speed and set JET_SPEED_M_S, TARGET_HEIGHT_M, usable range,
-and CALIBRATED=true only after controlled calibration. The trajectory calculation
+Measure jet exit speed and supply it to the Pi bridge with `--jet-speed-m-s`.
+Supply target height and nozzle/pivot geometry through the bridge arguments
+documented in the root README. Set usable range and CALIBRATED=true in firmware
+only after controlled calibration. Physical Calculate & aim requests the Python
+solver over serial and waits at most three seconds for a matching, valid angle.
+The trajectory calculation
 assumes horizontal distance and an ideal projectile; camera slant range, water
 breakup, variable pressure, and drag introduce error. No temperature is inferred.
 The defaults deliberately fault before firing because jet speed is unknown.
