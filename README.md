@@ -5,6 +5,38 @@ and estimated distances to an ESP32, which reads an analog flame sensor and cont
 
 ## Repository layout
 
+The `esp32_state_machine` branch has been merged into `huitae`. Use
+`firmware/esp32/FireTurret/FireTurret.ino` as the integrated controller.
+The redundant root `ESP32 State Machine.ino` has been removed. It was an alternative
+controller with placeholder commands, not a service used by FireTurret.
+`SensorDemo.ino` remains an optional input/simulation test; upload only one sketch.
+
+`main.py` is now a Pi entry point for the vision bridge and projectile solver:
+
+```sh
+python main.py --port /dev/ttyUSB0 --picamera --focal-length-px 490 --jet-speed-m-s 5
+```
+
+Replace example calibration with measurements before physical operation.
+This entry point owns the serial connection; do not launch other serial clients
+against the same port. `CAPS` queries the integrated firmware's supported
+interface. Commands for unimplemented axes, driving, and spray trajectories
+return `ERR,<command>,NOT_IMPLEMENTED` rather than falsely reporting completion.
+
+| Component | Merged status |
+|---|---|
+| Vision and projectile solver | Connected through `main.py` / vision bridge |
+| Elevation, switches, flame sensor, pump | Integrated FireTurret controller; hardware validation pending |
+| Homing helper, search planner, spray planner | Source retained; additional hardware command execution required |
+| Camera tilt and yaw | Reference definitions only; physical service not implemented |
+| Driving and encoders | Reference definitions only; calibrated driver and feedback service required |
+
+Completing the remaining components requires the actual ESP32 board, motor-driver
+interfaces, pin wiring, encoder specifications, mechanical limits/gearing, and
+the yaw mechanism. The reference sketch's pin map must not be assumed compatible
+with the integrated controller: it assigns GPIO34 to a camera switch, while the
+integrated controller uses GPIO34 for the analog flame sensor.
+
 ```text
 firmware/esp32/
   FireTurret/FireTurret.ino       Arduino state machine
@@ -49,7 +81,7 @@ example defaults do not authorize operation. Read the flame-sensor setup section
 in the wiring guide. This sensor does not measure temperature.
 Drive and horizontal scanning are not implemented.
 
-Start operation by pressing the separate button on GPIO23. During homing, the
+Start operation by pressing the separate button on GPIO21. During homing, the
 NEMA17 moves the turret toward 90 degrees above the ground until the limit switch
 on GPIO33 is pressed. This establishes the absolute home reference; it does not
 command a relative 90-degree turn from an unknown starting position. The turret

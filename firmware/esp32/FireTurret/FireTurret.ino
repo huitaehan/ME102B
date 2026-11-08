@@ -8,7 +8,8 @@ constexpr bool DEMO_MODE=true;
 constexpr uint32_t DEMO_MOTION_MS=1000, DEMO_FRAME_MS=100;
 
 constexpr int STEP_PIN=25, DIR_PIN=27, ENABLE_PIN=22;
-constexpr int START_PIN=23, HOME_PIN=33, PUMP_PIN=32;
+// Adafruit ESP32 Feather V2: MI/MISO=21, home=33, A2=34.
+constexpr int START_PIN=21, HOME_PIN=33, PUMP_PIN=32;
 constexpr int FLAME_PIN=34;
 constexpr bool FLAME_CALIBRATED=false;
 constexpr bool FLAME_HIGH_MEANS_FIRE=true;
@@ -100,6 +101,21 @@ void checkLimitSwitch() {
 
 // EVENT CHECKER: Read a camera message or a start/stop command.
 void acceptLine(char *line) {
+  if(!strcmp(line,"CAPS")) {
+    Serial.println("CAPS,FIRE,AIM_REQUEST,AIM_RESULT,AIM_ERROR,STOP,ELEVATION_ONLY");
+    return;
+  }
+  // The merged reference sketch acknowledged these without executing motion.
+  // Reject them explicitly until the corresponding hardware services exist.
+  const char *unsupported[]={"HOME","AIM_SET","YAW","CAM","DRIVE","GOTO",
+                             "TRAJ_BEGIN","LEG","TRAJ_RUN"};
+  for(const char *command:unsupported) {
+    size_t length=strlen(command);
+    if(!strncmp(line,command,length) && (line[length]==0 || line[length]==',')) {
+      Serial.printf("ERR,%s,NOT_IMPLEMENTED\n",command);
+      return;
+    }
+  }
   if(!strcmp(line,"STOP")) { transition(FAULT); return; }
   if(!strcmp(line,"START")) {
     if(ALLOW_SERIAL_START && state==WAIT_START) transition(HOMING);

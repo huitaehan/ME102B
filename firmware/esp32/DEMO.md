@@ -3,8 +3,8 @@
 Open `SensorDemo/SensorDemo.ino`, not `FireTurret/FireTurret.ino`.
 This separate sketch assigns only START_PIN=21, HOME_PIN=33, FLAME_PIN=34.
 It contains no motor/pump pin assignments and no digital output writes.
-GPIO21 is a proposed replacement for the GPIO23 setup that triggered resets;
-confirm it is exposed on your carrier board. Physical operation remains unverified.
+GPIO21 is the confirmed MI/MISO start-switch connection on the Adafruit ESP32
+Feather V2. The older setup used GPIO23. Physical operation remains unverified.
 
 Wire start switch GPIO21 to GND, limit switch GPIO33 to GND (NO/COM), and a
 verified 0–3.3 V analog sensor output to GPIO34 with common ground. Keep devices
@@ -33,7 +33,7 @@ At startup verify `DEMO MODE - actuator outputs disabled` appears.
 
 ## What is real and what is simulated
 
-- Real: start button GPIO23, home limit switch GPIO33, analog flame sensor GPIO34,
+- Real: start button GPIO21, home limit switch GPIO33, analog flame sensor GPIO34,
   debounce, analog filtering/thresholds, state transitions, and shooting timer.
 - Simulated: stepper motion, back-off and aiming completion (one second), a fixed
   45-degree trajectory, and intended pump actions. Actuator GPIOs are not initialized or written in demo mode. Keep all actuator
@@ -45,7 +45,7 @@ At startup verify `DEMO MODE - actuator outputs disabled` appears.
 
 ## Wire and calibrate first
 
-Wire the normally-open start button from GPIO23 to GND, home switch NO/COM from
+Wire the normally-open start button from GPIO21 to GND, home switch NO/COM from
 GPIO33 to GND, and the analog sensor output to GPIO34 with common ground. Confirm
 the sensor supply specification and ensure its output never exceeds 3.3 V.
 See README.md for wiring and analog calibration details.
@@ -112,7 +112,7 @@ The complete sketch prints BOOT CHECK 1 through 5 before the demo banner.
 Serial starts before input setup. If resets continue, capture the last checkpoint.
 Motor/pump GPIOs are untouched in demo mode; keep those devices disconnected.
 The example motor pins are STEP=25, DIR=27, ENABLE=22; GPIO26 is no longer used.
-A latching start switch works between GPIO23 and GND: open it, then close it to
+A latching start switch works between GPIO21 and GND: open it, then close it to
 start. A closed switch at boot must first be opened. Opening it is not a stop or
 power-off command. The complete diagnostic sketch includes setup(), loop(),
 all state-machine functions, and all global variables; open/copy the entire file.
