@@ -62,9 +62,15 @@ void transition(State next) {
   State previousState=state;
   reportPump(false); stopMotion(); state=next; entered=millis(); aimSet=false;
   if(next==HOMING) homed=false;
-  if(next==CHARACTERIZE && simulatedFlame && !simulatedFlameTimerStarted) {
+  if(next==CHARACTERIZE && distanceM>=MIN_RANGE_M && distanceM<=MAX_RANGE_M && simulatedFlame && !simulatedFlameTimerStarted) {
     simulatedFlameStarted=millis(); simulatedFlameTimerStarted=true;
     Serial.println("FLAME SOURCE: SIMULATED - automatic rise begins in 3 seconds.");
+  }
+  if(next==DRIVE && simulatedFlame) {
+    simulatedFlameStarted=millis(); simulatedFlameTimerStarted=true;
+    flameTotal=0; flameIndex=0; flameCount=0; infraredFire=false;
+    for(int i=0;i<FLAME_SAMPLE_COUNT;++i) flameSamples[i]=0;
+    Serial.println("SIMULATED APPROACH: drive for 3 seconds, then distance becomes 0.8 m and infrared rises.");
   }
   if(next==FIRE_CHECK) { checkFrame=frameId; checkSawFrame=false; clearSince=0; }
   Serial.printf("STATE,%d\n",int(next));
@@ -74,7 +80,7 @@ void transition(State next) {
   if(DEMO_MODE) {
     Serial.printf("DEMO STATE: %s\n",STATE_NAMES[int(next)]);
     if(next==HOMING) Serial.println("DEMO ACTION: motor disabled; press the real home switch.");
-    if(next==DRIVE) Serial.println("DEMO ACTION: driving is not implemented.");
+    if(next==DRIVE) Serial.println("DEMO ACTION: approach simulated; no motor outputs.");
     if(next==SHOOT) Serial.println("DEMO ACTION: pump ON simulated; physical pump stays OFF.");
     else Serial.println("DEMO ACTION: pump OFF; actuator outputs disabled.");
   }
@@ -268,8 +274,13 @@ bool calculateAngle(float range,float &degrees) {
   return range>0 && degrees>=MIN_ANGLE && degrees<=MAX_ANGLE;
 }
 
-// SERVICE FUNCTION: Leave driving blank until the drive system is added.
-void serviceDrive() {   }
+// SERVICE FUNCTION: Simulate approaching the fire after three seconds in Drive.
+void serviceDrive() {
+  if(demoCamera && demoFire && millis()-entered>=3000 && demoDistanceM>MAX_RANGE_M) {
+    demoDistanceM=0.8f;
+    Serial.println("SIMULATED CAMERA: fire is now within range at 0.8 m; checking infrared confirmation.");
+  }
+}
 
 // SERVICE FUNCTION: Leave physical scanning blank; the camera looks for fire.
 void serviceSearch() {   }
@@ -301,7 +312,8 @@ void serviceStateMachine() {
     case CHARACTERIZE:
 
       if(!targetVisible()) transition(SEARCH);
-      else if(flameConfirmed()) transition(targetInRange()?CALCULATE_AIM:DRIVE);
+      else if(!targetInRange()) transition(DRIVE);
+      else if(flameConfirmed()) transition(CALCULATE_AIM);
       break;
     case DRIVE:
 
@@ -358,7 +370,7 @@ void setup() {
   Serial.println("BOOT CHECK: analog input GPIO34 ready"); Serial.flush();
   startRaw=startStable=previousStart=(digitalRead(START_PIN)==LOW);
   releasedBeforeStart=!startRaw; startChanged=millis(); entered=millis();
-  Serial.println("FLAME SOURCE: SIMULATED by default; first Characterize starts the 3-second delay.");
+  Serial.println("FLAME SOURCE: SIMULATED by default; Drive or an in-range Characterize starts the 3-second delay.");
   Serial.println("COMMANDS: upper/lowercase accepted. Set Serial Monitor line ending to Newline.");
   Serial.println("SIMULATED CAMERA: SIM_NEAR, SIM_FAR, SIM_CLEAR, SIM_OFF; STOP enters Fault.");
   Serial.println("FLAME COMMANDS: SIM_FLAME starts a simulated rise/fall; REAL_FLAME restores the sensor.");

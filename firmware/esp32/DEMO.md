@@ -144,3 +144,17 @@ it in the video and confirm instructor acceptance for the analog-sensor requirem
 Use `sim_far` to select 3 m and reach Drive after analog confirmation; `sim_near`
 selects 0.8 m and leads to Calculate & aim. The camera source must still be selected
 explicitly. `real_flame` restores real input and calibration requirements.
+
+## Updated simulated approach sequence
+
+For the latest SensorDemo, send `sim_far` after homing. Out-of-range camera fire
+now enters Drive immediately, before requiring analog confirmation. The simulated
+flame profile restarts on Drive entry. After three seconds of simulated driving,
+the simulated camera distance changes automatically from 3.0 m to 0.8 m, and the
+analog profile starts rising. The machine briefly returns to Characterize to
+check the new distance and waits for infrared confirmation, then enters Calculate
+& aim and Shoot. This is a simulated approach; no physical driving occurs.
+No need to send sim_near to leave Drive in this sequence. Real camera FIRE inputs
+are never automatically rewritten; they require an actual in-range observation.
+`real_flame` still requires real sensor confirmation; no analog values are changed
+when that source is selected. Full hardware-controller behavior is unchanged.
