@@ -1,7 +1,41 @@
 """YOLO -> ESP32 USB serial bridge; run from repository root."""
 import argparse
+import importlib.util
+import math
 from pathlib import Path
 import time
+
+SOLVER_PATH = Path(__file__).resolve().parents[1] / 'Calcs and Shooting' / 'Projectile Motion Calculation.py'
+_spec = importlib.util.spec_from_file_location('projectile_solver', SOLVER_PATH)
+solver = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(solver)
+
+
+def solve_request(line, args):
+    """Answer ESP32 trajectory requests using metres and degrees."""
+    if not line.startswith('AIM_REQUEST,'):
+        return None
+    fields = line.split(',')
+    request_id = fields[1] if len(fields) > 1 else '0'
+    try:
+        if len(fields) != 5 or not request_id.isdecimal():
+            raise ValueError('Malformed request')
+        distance, minimum, maximum = map(float, fields[2:])
+        if not all(math.isfinite(v) for v in (distance, minimum, maximum)):
+            raise ValueError('Nonfinite request')
+        if distance <= 0 or not 0 <= minimum < maximum < 90:
+            raise ValueError('Invalid geometry')
+        if args.jet_speed_m_s is None:
+            raise ValueError('Jet calibration missing')
+        angle = solver.launch_angle(
+            distance, args.target_height_m, args.jet_speed_m_s,
+            args.nozzle_length_m, args.turret_x_m, args.turret_y_m,
+            args.base_height_m, beta_min=minimum, beta_max=maximum)
+        if not math.isfinite(angle) or not minimum <= angle <= maximum:
+            raise ValueError('Invalid angle')
+        return f'AIM_RESULT,{request_id},{angle:.4f}\n'
+    except (ValueError, solver.OutOfRange, OverflowError, ZeroDivisionError):
+        return f'AIM_ERROR,{request_id}\n'
 
 
 def observation(boxes, flame_height_cm, focal_length_px):
@@ -26,7 +60,19 @@ def main():
     parser.add_argument('--focal-length-px', type=float, required=True,
                         help='Repo defaults: 600 webcam; 490 Pi at 640x640. Calibrate.')
     parser.add_argument('--start', action='store_true', help='Bench test only: requires firmware ALLOW_SERIAL_START=true')
+    parser.add_argument('--jet-speed-m-s', type=float, help='Measured jet exit speed for physical aiming')
+    parser.add_argument('--target-height-m', type=float, default=0.0)
+    parser.add_argument('--nozzle-length-m', type=float, default=0.0)
+    parser.add_argument('--turret-x-m', type=float, default=0.0, help='Pivot offset from camera distance reference')
+    parser.add_argument('--turret-y-m', type=float, default=0.0)
+    parser.add_argument('--base-height-m', type=float, default=0.0)
     args = parser.parse_args()
+    values = [args.flame_height_cm, args.focal_length_px, args.target_height_m,
+              args.nozzle_length_m, args.turret_x_m, args.turret_y_m, args.base_height_m]
+    if not all(math.isfinite(v) for v in values) or args.nozzle_length_m < 0:
+        parser.error('Geometry must be finite and nozzle length nonnegative')
+    if args.jet_speed_m_s is not None and (not math.isfinite(args.jet_speed_m_s) or args.jet_speed_m_s <= 0):
+        parser.error('Jet speed must be finite and positive')
     if args.flame_height_cm <= 0 or args.focal_length_px <= 0:
         parser.error('Calibration values must be positive')
     import cv2
@@ -65,7 +111,11 @@ def main():
             message = observation(boxes, args.flame_height_cm, args.focal_length_px)
             link.write(message.encode('ascii'))
             while link.in_waiting:
-                print(link.readline().decode('ascii', errors='replace').strip())
+                line = link.readline().decode('ascii', errors='replace').strip()
+                print(line)
+                reply = solve_request(line, args)
+                if reply is not None:
+                    link.write(reply.encode('ascii'))
     except KeyboardInterrupt:
         pass
     finally:
