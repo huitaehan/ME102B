@@ -100,6 +100,21 @@ void checkLimitSwitch() {
 
 // EVENT CHECKER: Read a camera message or a start/stop command.
 void acceptLine(char *line) {
+  if(!strcmp(line,"CAPS")) {
+    Serial.println("CAPS,FIRE,AIM_REQUEST,AIM_RESULT,AIM_ERROR,STOP,ELEVATION_ONLY");
+    return;
+  }
+  // The merged reference sketch acknowledged these without executing motion.
+  // Reject them explicitly until the corresponding hardware services exist.
+  const char *unsupported[]={"HOME","AIM_SET","YAW","CAM","DRIVE","GOTO",
+                             "TRAJ_BEGIN","LEG","TRAJ_RUN"};
+  for(const char *command:unsupported) {
+    size_t length=strlen(command);
+    if(!strncmp(line,command,length) && (line[length]==0 || line[length]==',')) {
+      Serial.printf("ERR,%s,NOT_IMPLEMENTED\n",command);
+      return;
+    }
+  }
   if(!strcmp(line,"STOP")) { transition(FAULT); return; }
   if(!strcmp(line,"START")) {
     if(ALLOW_SERIAL_START && state==WAIT_START) transition(HOMING);

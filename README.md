@@ -5,6 +5,38 @@ and estimated distances to an ESP32, which reads an analog flame sensor and cont
 
 ## Repository layout
 
+The `esp32_state_machine` branch has been merged into `huitae`. Use
+`firmware/esp32/FireTurret/FireTurret.ino` as the integrated controller.
+The root `ESP32 State Machine.ino` is retained as an experimental reference with
+a compile-time guard: its camera/yaw/trajectory commands were placeholders and
+its drive command used blocking, uncalibrated motion. Do not upload that sketch.
+
+`main.py` is now a Pi entry point for the vision bridge and projectile solver:
+
+```sh
+python main.py --port /dev/ttyUSB0 --picamera --focal-length-px 490 --jet-speed-m-s 5
+```
+
+Replace example calibration with measurements before physical operation.
+This entry point owns the serial connection; do not launch other serial clients
+against the same port. `CAPS` queries the integrated firmware's supported
+interface. Commands for unimplemented axes, driving, and spray trajectories
+return `ERR,<command>,NOT_IMPLEMENTED` rather than falsely reporting completion.
+
+| Component | Merged status |
+|---|---|
+| Vision and projectile solver | Connected through `main.py` / vision bridge |
+| Elevation, switches, flame sensor, pump | Integrated FireTurret controller; hardware validation pending |
+| Homing helper, search planner, spray planner | Source retained; additional hardware command execution required |
+| Camera tilt and yaw | Reference definitions only; physical service not implemented |
+| Driving and encoders | Reference definitions only; calibrated driver and feedback service required |
+
+Completing the remaining components requires the actual ESP32 board, motor-driver
+interfaces, pin wiring, encoder specifications, mechanical limits/gearing, and
+the yaw mechanism. The reference sketch's pin map must not be assumed compatible
+with the integrated controller: it assigns GPIO34 to a camera switch, while the
+integrated controller uses GPIO34 for the analog flame sensor.
+
 ```text
 firmware/esp32/
   FireTurret/FireTurret.ino       Arduino state machine
