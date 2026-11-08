@@ -17,8 +17,8 @@ the demo. Real actuator behavior below requires `DEMO_MODE=false` and calibratio
 | Signal | GPIO | Connection |
 |---|---:|---|
 | STEP | 25 | STEP/DIR motor driver's STEP input |
-| DIR | 26 | Driver DIR input |
-| Enable | 27 | Driver active-low enable |
+| DIR | 27 | Driver DIR input |
+| Enable | 22 | Driver active-low enable |
 | Start button | 23 | Normally-open button to GND, internal pull-up |
 | Home switch | 33 | Switch to GND, internal pull-up |
 | Flame analog output | 34 | Sensor AO/S signal, ADC1 input; maximum 3.3 V |

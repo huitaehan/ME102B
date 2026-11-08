@@ -7,7 +7,7 @@
 constexpr bool DEMO_MODE=true;
 constexpr uint32_t DEMO_MOTION_MS=1000, DEMO_FRAME_MS=100;
 
-constexpr int STEP_PIN=25, DIR_PIN=26, ENABLE_PIN=27;
+constexpr int STEP_PIN=25, DIR_PIN=27, ENABLE_PIN=22;
 constexpr int START_PIN=23, HOME_PIN=33, PUMP_PIN=32;
 constexpr int FLAME_PIN=34;
 constexpr bool FLAME_CALIBRATED=false;
@@ -51,7 +51,10 @@ uint32_t demoLastFrame=0, demoMotionStarted=0;
 char input[96]; size_t inputLength=0; bool dropping=false;
 
 // SERVICE FUNCTION: Turn the water pump on or off.
-void pump(bool on) { digitalWrite(PUMP_PIN, ((on && !DEMO_MODE)==PUMP_ACTIVE_HIGH)?HIGH:LOW); }
+void pump(bool on) {
+  if(DEMO_MODE) return;
+  digitalWrite(PUMP_PIN, (on==PUMP_ACTIVE_HIGH)?HIGH:LOW);
+}
 
 // SERVICE FUNCTION: Stop the turret from moving.
 void stopMotion() { target=position; }
@@ -61,7 +64,7 @@ void transition(State next) {
   pump(false); stopMotion(); state=next; entered=millis(); aimSet=false;
   if(next==HOMING) homed=false;
   if(next==FIRE_CHECK) { checkFrame=frameId; checkSawFrame=false; clearSince=0; }
-  if(next==FAULT) digitalWrite(ENABLE_PIN,HIGH);
+  if(next==FAULT && !DEMO_MODE) digitalWrite(ENABLE_PIN,HIGH);
   Serial.printf("STATE,%d\n",int(next));
   if(DEMO_MODE) {
     const char *names[]={"Wait for start","Homing","Search","Characterize","Drive",
@@ -199,7 +202,7 @@ bool elapsed(uint32_t ms) { return millis()-entered>=ms; }
 // SERVICE FUNCTION: Send step pulses to move the turret motor.
 void serviceStepper() {
   if(DEMO_MODE) {
-    digitalWrite(STEP_PIN,LOW); digitalWrite(ENABLE_PIN,HIGH); pulseHigh=false;
+    pulseHigh=false;
     if(homed && state!=HOMING && state!=FAULT && millis()-demoMotionStarted>=DEMO_MOTION_MS)
       position=target;
     return;
@@ -327,24 +330,35 @@ void serviceStateMachine() {
 
 // SERVICE FUNCTION: Set up the pins and serial connection when the ESP32 starts.
 void setup() {
-  pinMode(PUMP_PIN,OUTPUT); pump(false);
-  pinMode(STEP_PIN,OUTPUT); digitalWrite(STEP_PIN,LOW);
-  pinMode(DIR_PIN,OUTPUT); pinMode(ENABLE_PIN,OUTPUT);
-  digitalWrite(ENABLE_PIN,DEMO_MODE?HIGH:LOW); pinMode(HOME_PIN,INPUT_PULLUP);
+  Serial.begin(115200);
+  delay(1000);
+  Serial.println("BOOT CHECK 1: setup started"); Serial.flush();
+  if(!DEMO_MODE) {
+    pinMode(PUMP_PIN,OUTPUT); pump(false);
+    pinMode(STEP_PIN,OUTPUT); digitalWrite(STEP_PIN,LOW);
+    pinMode(DIR_PIN,OUTPUT); pinMode(ENABLE_PIN,OUTPUT);
+    digitalWrite(ENABLE_PIN,LOW);
+  }
+  Serial.println("BOOT CHECK 2: actuator setup skipped in demo"); Serial.flush();
+  pinMode(HOME_PIN,INPUT_PULLUP);
+  Serial.println("BOOT CHECK 3: home input ready"); Serial.flush();
   pinMode(START_PIN,INPUT_PULLUP);
+  Serial.println("BOOT CHECK 4: start input ready"); Serial.flush();
   pinMode(FLAME_PIN,INPUT); analogReadResolution(12);
+  Serial.println("BOOT CHECK 5: analog input ready"); Serial.flush();
   startRaw=startStable=previousStart=(digitalRead(START_PIN)==LOW);
   releasedBeforeStart=!startRaw; startChanged=millis();
-  Serial.begin(115200); entered=millis();
+  entered=millis();
   if(DEMO_MODE) {
     Serial.println("DEMO MODE - actuator outputs disabled. Real flame calibration still required.");
     Serial.println("DEMO COMMANDS: SIM_NEAR, SIM_FAR, SIM_CLEAR, SIM_OFF, STOP");
     Serial.println("DEMO STATE: Wait for start");
   }
-  Serial.println("WAIT_START: press the separate start button.");
+  Serial.println("WAIT_START: open the start switch, then close it to start.");
 }
 
 // SERVICE FUNCTION: Keep checking inputs and running the state machine and motor.
 void loop() {
   serviceFlameSensor(); checkSerial(); serviceDemoCamera(); checkStartButton(); checkLimitSwitch(); serviceStateMachine(); serviceStepper(); reportFlameSensor();
+  delay(1);
 }

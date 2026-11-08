@@ -10,8 +10,8 @@ At startup verify `DEMO MODE - actuator outputs disabled` appears.
 - Real: start button GPIO23, home limit switch GPIO33, analog flame sensor GPIO34,
   debounce, analog filtering/thresholds, state transitions, and shooting timer.
 - Simulated: stepper motion, back-off and aiming completion (one second), a fixed
-  45-degree trajectory, and intended pump actions. STEP stays LOW, active-low
-  driver ENABLE stays HIGH, and pump output stays at its configured OFF level.
+  45-degree trajectory, and intended pump actions. Actuator GPIOs are not initialized or written in demo mode. Keep all actuator
+  drivers physically disconnected; unconfigured pins do not guarantee an OFF level.
 - Optional simulated camera: serial commands below generate observations every
   100 ms. The real Pi bridge can still send FIRE messages; receiving a valid FIRE
   message disables the simulated source. Use only one serial client at a time.
@@ -79,3 +79,14 @@ camera simulation. This is not a test of physical aiming, pumping, or detection.
 Set DEMO_MODE=false and complete both analog and jet/mechanical calibration before
 connecting actuators. SIM commands are ignored with demo mode off, real STEP/DIR
 operation resumes, and the calibrated projectile calculation is required again.
+
+## Diagnostic startup version
+
+The complete sketch prints BOOT CHECK 1 through 5 before the demo banner.
+Serial starts before input setup. If resets continue, capture the last checkpoint.
+Motor/pump GPIOs are untouched in demo mode; keep those devices disconnected.
+The example motor pins are STEP=25, DIR=27, ENABLE=22; GPIO26 is no longer used.
+A latching start switch works between GPIO23 and GND: open it, then close it to
+start. A closed switch at boot must first be opened. Opening it is not a stop or
+power-off command. The complete diagnostic sketch includes setup(), loop(),
+all state-machine functions, and all global variables; open/copy the entire file.
