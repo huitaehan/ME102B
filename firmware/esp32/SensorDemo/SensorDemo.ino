@@ -42,6 +42,7 @@ bool infraredFire=false;
 uint32_t lastFlameSample=0, lastFlameReport=0;
 bool demoCamera=false, demoFire=false;
 bool simulatedFlame=true, simulatedFlameTimerStarted=false;
+bool driveApproachComplete=false;
 uint32_t simulatedFlameStarted=0, simulatedNoise=12345;
 float demoDistanceM=0.8f;
 uint32_t demoLastFrame=0, demoMotionStarted=0;
@@ -66,11 +67,14 @@ void transition(State next) {
     simulatedFlameStarted=millis(); simulatedFlameTimerStarted=true;
     Serial.println("FLAME SOURCE: SIMULATED - automatic rise begins in 3 seconds.");
   }
-  if(next==DRIVE && simulatedFlame) {
-    simulatedFlameStarted=millis(); simulatedFlameTimerStarted=true;
-    flameTotal=0; flameIndex=0; flameCount=0; infraredFire=false;
-    for(int i=0;i<FLAME_SAMPLE_COUNT;++i) flameSamples[i]=0;
-    Serial.println("SIMULATED APPROACH: drive for 3 seconds, then distance becomes 0.8 m and infrared rises.");
+  if(next==DRIVE) {
+    driveApproachComplete=false;
+    if(simulatedFlame) {
+      simulatedFlameTimerStarted=false;
+      flameTotal=0; flameIndex=0; flameCount=0; infraredFire=false;
+      for(int i=0;i<FLAME_SAMPLE_COUNT;++i) flameSamples[i]=0;
+    }
+    Serial.println("DRIVE PHASE: simulate driving for 3 seconds; flame reading stays low.");
   }
   if(next==FIRE_CHECK) { checkFrame=frameId; checkSawFrame=false; clearSince=0; }
   Serial.printf("STATE,%d\n",int(next));
@@ -240,9 +244,10 @@ bool flameConfirmed() { return flameSensorReady() && infraredFire; }
 void reportFlameSensor() {
   if(millis()-lastFlameReport<500) return;
   lastFlameReport=millis();
-  Serial.printf("STATUS: state=%d %s | start=%s home=%s | analog=%d ready=%d confirmed=%d source=%s\n",
+  Serial.printf("STATUS: state=%d %s | start=%s home=%s | analog=%d ready=%d confirmed=%d source=%s distance=%.2fm phase=%s\n",
     int(state),STATE_NAMES[int(state)],startStable?"ON":"OFF",switchStable?"PRESSED":"RELEASED",
-    flameAverage,int(flameSensorReady()),int(flameConfirmed()),simulatedFlame?"SIMULATED":"REAL");
+    flameAverage,int(flameSensorReady()),int(flameConfirmed()),simulatedFlame?"SIMULATED":"REAL",distanceM,
+    state==DRIVE?(driveApproachComplete?"WAIT_FOR_FLAME":"DRIVING"):"-");
 }
 
 // EVENT CHECKER: Check if all requested motor steps are finished.
@@ -276,9 +281,14 @@ bool calculateAngle(float range,float &degrees) {
 
 // SERVICE FUNCTION: Simulate approaching the fire after three seconds in Drive.
 void serviceDrive() {
-  if(demoCamera && demoFire && millis()-entered>=3000 && demoDistanceM>MAX_RANGE_M) {
-    demoDistanceM=0.8f;
-    Serial.println("SIMULATED CAMERA: fire is now within range at 0.8 m; checking infrared confirmation.");
+  if(!driveApproachComplete && millis()-entered>=3000) {
+    driveApproachComplete=true;
+    if(demoCamera && demoFire) demoDistanceM=0.8f;
+    if(simulatedFlame) {
+      simulatedFlameStarted=millis()-3000;
+      simulatedFlameTimerStarted=true;
+    }
+    Serial.println("DRIVE COMPLETE: flame value now rises; waiting for confirmation threshold 2400.");
   }
 }
 
@@ -319,7 +329,10 @@ void serviceStateMachine() {
 
       serviceDrive();
       if(!targetVisible()) transition(SEARCH);
-      else if(targetInRange()) transition(CHARACTERIZE);
+      else if(driveApproachComplete && targetInRange() && flameConfirmed()) {
+        Serial.println("FIRE CONFIRMED: in range and infrared threshold reached; proceed to aiming.");
+        transition(CALCULATE_AIM);
+      }
       break;
     case CALCULATE_AIM:
 
@@ -361,6 +374,7 @@ void serviceStateMachine() {
 // SERVICE FUNCTION: Set up only the three sensor inputs and Serial Monitor.
 void setup() {
   Serial.begin(115200); delay(1000);
+  Serial.println("DEMO VERSION: DRIVE-THEN-FLAME-2");
   Serial.println("INPUT-ONLY DEMO: no motor or pump GPIOs are assigned."); Serial.flush();
   pinMode(HOME_PIN,INPUT_PULLUP);
   Serial.println("BOOT CHECK: home input GPIO33 ready"); Serial.flush();

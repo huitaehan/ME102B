@@ -158,3 +158,14 @@ No need to send sim_near to leave Drive in this sequence. Real camera FIRE input
 are never automatically rewritten; they require an actual in-range observation.
 `real_flame` still requires real sensor confirmation; no analog values are changed
 when that source is selected. Full hardware-controller behavior is unchanged.
+
+## Drive-then-flame revision 2 (current behavior)
+
+Startup identifies `DEMO VERSION: DRIVE-THEN-FLAME-2`. After homing, send sim_far.
+State 4 stays active while simulating driving for three seconds with low flame
+readings. Then the simulated camera target becomes 0.8 m away and flame readings
+start rising immediately. Remain in State 4 until the filtered reading reaches
+2400 and the camera is fresh/in range, then go directly to State 5 (no return to
+State 3). STATUS now includes distance and DRIVING/WAIT_FOR_FLAME phase. Simulated
+approach never changes real camera data or real flame readings. This supersedes
+the earlier approach description that returned from Drive to Characterize.
