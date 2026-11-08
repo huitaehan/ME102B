@@ -26,6 +26,11 @@ assets/
 
 ## Sensor-only demo
 
+For the current three-input test, open `firmware/esp32/SensorDemo/SensorDemo.ino`.
+It assigns only the start switch (GPIO21), home switch (GPIO33), and analog flame
+sensor (GPIO34), with no actuator GPIOs. Its aiming/pumping actions are simulations.
+
+
 The sketch defaults to `DEMO_MODE=true`: physical motor and pump outputs are disabled,
 while real buttons and the calibrated analog flame sensor still operate. See the
 [demo instructions](firmware/esp32/DEMO.md) for Serial Monitor commands and a recording

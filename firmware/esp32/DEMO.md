@@ -1,3 +1,27 @@
+# Input-only demo (use this for the current sensor test)
+
+Open `SensorDemo/SensorDemo.ino`, not `FireTurret/FireTurret.ino`.
+This separate sketch assigns only START_PIN=21, HOME_PIN=33, FLAME_PIN=34.
+It contains no motor/pump pin assignments and no digital output writes.
+GPIO21 is a proposed replacement for the GPIO23 setup that triggered resets;
+confirm it is exposed on your carrier board. Physical operation remains unverified.
+
+Wire start switch GPIO21 to GND, limit switch GPIO33 to GND (NO/COM), and a
+verified 0–3.3 V analog sensor output to GPIO34 with common ground. Keep devices
+unplugged for the initial boot check. Use Serial Monitor at 115200 baud, Newline.
+Opening then closing the latching start switch requests Homing. Opening it does
+not stop operation or remove power. Trigger/release Home to reach Search.
+
+Every 500 ms INPUTS shows start/home (1=closed), analog average, calibration
+readiness, and infrared confirmation. Calibrate the real analog sensor as described
+below before expecting Characterize to advance. SIM_NEAR/FAR/CLEAR/OFF optionally
+simulate camera frames; aiming and pumping are printed simulations only.
+The full state-machine sequence and timers follow the guide below; actuator GPIO
+configuration and normal-mode instructions apply only to the older FireTurret sketch.
+SensorDemo is always a simulation; it has no hardware-actuation mode.
+
+---
+
 # Sensor-only demonstration
 
 The sketch now defaults to `DEMO_MODE=true`. Upload
