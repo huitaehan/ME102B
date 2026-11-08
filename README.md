@@ -7,9 +7,9 @@ and estimated distances to an ESP32, which reads an analog flame sensor and cont
 
 The `esp32_state_machine` branch has been merged into `huitae`. Use
 `firmware/esp32/FireTurret/FireTurret.ino` as the integrated controller.
-The root `ESP32 State Machine.ino` is retained as an experimental reference with
-a compile-time guard: its camera/yaw/trajectory commands were placeholders and
-its drive command used blocking, uncalibrated motion. Do not upload that sketch.
+The redundant root `ESP32 State Machine.ino` has been removed. It was an alternative
+controller with placeholder commands, not a service used by FireTurret.
+`SensorDemo.ino` remains an optional input/simulation test; upload only one sketch.
 
 `main.py` is now a Pi entry point for the vision bridge and projectile solver:
 
@@ -81,7 +81,7 @@ example defaults do not authorize operation. Read the flame-sensor setup section
 in the wiring guide. This sensor does not measure temperature.
 Drive and horizontal scanning are not implemented.
 
-Start operation by pressing the separate button on GPIO23. During homing, the
+Start operation by pressing the separate button on GPIO21. During homing, the
 NEMA17 moves the turret toward 90 degrees above the ground until the limit switch
 on GPIO33 is pressed. This establishes the absolute home reference; it does not
 command a relative 90-degree turn from an unknown starting position. The turret

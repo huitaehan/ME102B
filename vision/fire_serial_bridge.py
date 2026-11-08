@@ -55,6 +55,10 @@ def main():
     parser.add_argument('--port', required=True, help='e.g. /dev/ttyUSB0 or COM5')
     parser.add_argument('--camera', default='0', help='OpenCV camera index or URL')
     parser.add_argument('--picamera', action='store_true', help='Use Picamera2 on Pi')
+    parser.add_argument('--imx500-model', type=Path, help='Run inference on AI Camera using this RPK')
+    parser.add_argument('--imx500-box-order', choices=('xyxy', 'yxyx'))
+    parser.add_argument('--imx500-box-units', choices=('normalized', 'pixels'))
+    parser.add_argument('--fire-class', type=int, default=0)
     parser.add_argument('--model', default=str(Path(__file__).resolve().parents[1] / 'models/best.pt'))
     parser.add_argument('--flame-height-cm', type=float, default=5.0)
     parser.add_argument('--focal-length-px', type=float, required=True,
@@ -67,6 +71,10 @@ def main():
     parser.add_argument('--turret-y-m', type=float, default=0.0)
     parser.add_argument('--base-height-m', type=float, default=0.0)
     args = parser.parse_args()
+    if args.imx500_model and (not args.imx500_box_order or not args.imx500_box_units):
+        parser.error('Verify and supply --imx500-box-order and --imx500-box-units')
+    if args.imx500_model and not args.imx500_model.is_file():
+        parser.error('IMX500 RPK file does not exist; package the model on the Pi first')
     values = [args.flame_height_cm, args.focal_length_px, args.target_height_m,
               args.nozzle_length_m, args.turret_x_m, args.turret_y_m, args.base_height_m]
     if not all(math.isfinite(v) for v in values) or args.nozzle_length_m < 0:
@@ -77,12 +85,27 @@ def main():
         parser.error('Calibration values must be positive')
     import cv2
     import serial
-    from ultralytics import YOLO
-    model = YOLO(args.model)
+    model = None
+    if not args.imx500_model:
+        from ultralytics import YOLO
+        model = YOLO(args.model)
     camera = None
     link = None
     try:
-        if args.picamera:
+        if args.imx500_model:
+            from picamera2 import Picamera2
+            from picamera2.devices.imx500 import IMX500
+            if __package__:
+                from .imx500_backend import observation_from_outputs
+            else:
+                from imx500_backend import observation_from_outputs
+            imx500 = IMX500(str(args.imx500_model))
+            camera = Picamera2(imx500.camera_num)
+            camera.configure(camera.create_preview_configuration(
+                main={'size': (640, 640), 'format': 'RGB888'}, buffer_count=12))
+            camera.start()
+            input_width, input_height = imx500.get_input_size()
+        elif args.picamera:
             from picamera2 import Picamera2
             camera = Picamera2()
             camera.configure(camera.create_video_configuration(
@@ -100,16 +123,26 @@ def main():
         if args.start:
             link.write(b'START\n')
         while True:
-            if args.picamera:
+            if args.imx500_model:
+                metadata = camera.capture_metadata()
+                outputs = imx500.get_outputs(metadata, add_batch=True)
+                message = observation_from_outputs(
+                    outputs, box_order=args.imx500_box_order,
+                    box_units=args.imx500_box_units, input_height=input_height,
+                    flame_height_cm=args.flame_height_cm,
+                    focal_length_px=args.focal_length_px, fire_class=args.fire_class)
+            elif args.picamera:
                 frame = camera.capture_array('main')
             else:
                 ok, frame = camera.read()
                 if not ok:
                     raise RuntimeError('Camera capture failed; no clear-fire frame sent')
-            results = model(frame, verbose=False)
-            boxes = [box for result in results for box in result.boxes]
-            message = observation(boxes, args.flame_height_cm, args.focal_length_px)
-            link.write(message.encode('ascii'))
+            if not args.imx500_model:
+                results = model(frame, verbose=False)
+                boxes = [box for result in results for box in result.boxes]
+                message = observation(boxes, args.flame_height_cm, args.focal_length_px)
+            if message is not None:
+                link.write(message.encode('ascii'))
             while link.in_waiting:
                 line = link.readline().decode('ascii', errors='replace').strip()
                 print(line)
@@ -126,7 +159,7 @@ def main():
             finally:
                 link.close()
         if camera is not None:
-            if args.picamera:
+            if args.picamera or args.imx500_model:
                 camera.stop()
             else:
                 camera.release()

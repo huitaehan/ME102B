@@ -75,7 +75,7 @@ stateDiagram-v2
     }
 ```
 
-- Start button: GPIO23 to GND; home switch: GPIO33 to GND; both debounced.
+- Start button: GPIO21 to GND; home switch: GPIO33 to GND; both debounced.
 - A held button does not repeatedly trigger homing. Presses outside Wait/Search
   are ignored; serial START is disabled by default.
 - Camera data becomes stale after 1.5 seconds; usable range is 0.10–2.00 m.

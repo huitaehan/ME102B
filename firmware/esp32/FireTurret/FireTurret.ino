@@ -8,7 +8,8 @@ constexpr bool DEMO_MODE=true;
 constexpr uint32_t DEMO_MOTION_MS=1000, DEMO_FRAME_MS=100;
 
 constexpr int STEP_PIN=25, DIR_PIN=27, ENABLE_PIN=22;
-constexpr int START_PIN=23, HOME_PIN=33, PUMP_PIN=32;
+// Adafruit ESP32 Feather V2: MI/MISO=21, home=33, A2=34.
+constexpr int START_PIN=21, HOME_PIN=33, PUMP_PIN=32;
 constexpr int FLAME_PIN=34;
 constexpr bool FLAME_CALIBRATED=false;
 constexpr bool FLAME_HIGH_MEANS_FIRE=true;

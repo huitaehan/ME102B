@@ -19,7 +19,7 @@ the demo. Real actuator behavior below requires `DEMO_MODE=false` and calibratio
 | STEP | 25 | STEP/DIR motor driver's STEP input |
 | DIR | 27 | Driver DIR input |
 | Enable | 22 | Driver active-low enable |
-| Start button | 23 | Normally-open button to GND, internal pull-up |
+| Start button | 21 | Normally-open button to GND, internal pull-up |
 | Home switch | 33 | Switch to GND, internal pull-up |
 | Flame analog output | 34 | Sensor AO/S signal, ADC1 input; maximum 3.3 V |
 | Pump control | 32 | Active-high MOSFET/relay driver input |
@@ -37,7 +37,7 @@ Set actual pin assignments, pump polarity, HOME_DIR_HIGH, STEPS_PER_DEGREE
 (including microstepping/gearing), and mechanical MIN_ANGLE/MAX_ANGLE. The home
 switch corresponds to 90 degrees above horizontal. Initial homing moves toward
 that switch, times out after 15 seconds, then backs off to MAX_ANGLE.
-Press the separate start button on GPIO23 to begin homing. The home limit switch
+Press the separate start button on GPIO21 to begin homing. The home limit switch
 on GPIO33 only establishes the 90-degree position; it never starts the machine.
 A start button held during boot must be released and pressed again. The limit
 switch already being pressed when homing begins establishes home immediately.
@@ -92,7 +92,7 @@ logic. Both are explicitly labeled with comments in the Arduino sketch.
 
 | Number | State | Services / actions | Event conditions and next state |
 |---|---|---|---|
-| 0 | Wait for start | Keep pump off; monitor separate start button on GPIO23. | A new debounced button press enters Homing. A button held at boot must first be released. The home switch cannot start the machine. |
+| 0 | Wait for start | Keep pump off; monitor separate start button on GPIO21. | A new debounced button press enters Homing. A button held at boot must first be released. The home switch cannot start the machine. |
 | 1 | Homing | Move toward the limit switch at 90 degrees above ground. When reached, record zero steps as the 90-degree reference. | Debounced limit-switch contact enters Search and commands back-off to 85 degrees. Failure to reach the switch within 15 seconds enters Fault. |
 | 2 | Search | Complete switch back-off; monitor fresh YOLO observations. No physical scanning is implemented. | After back-off, fresh fire enters Characterize. A switch still pressed after back-off enters Fault. A new start-button press stops motion and re-enters Homing, including during back-off. Otherwise remain in Search. |
 | 3 | Characterize | Use camera distance and filtered analog infrared readings; no temperature measurement is available. | Only camera fire supported by calibrated infrared detection advances: within 0.10–2.00 m enters Calculate & aim; outside that range enters Drive. Otherwise remain here to recheck with pump off. Missing or stale fire returns to Search. |
