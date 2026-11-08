@@ -41,7 +41,7 @@ int flameIndex=0, flameCount=0, flameTotal=0, flameAverage=0;
 bool infraredFire=false;
 uint32_t lastFlameSample=0, lastFlameReport=0;
 bool demoCamera=false, demoFire=false;
-bool simulatedFlame=false;
+bool simulatedFlame=true, simulatedFlameTimerStarted=false;
 uint32_t simulatedFlameStarted=0, simulatedNoise=12345;
 float demoDistanceM=0.8f;
 uint32_t demoLastFrame=0, demoMotionStarted=0;
@@ -62,6 +62,10 @@ void transition(State next) {
   State previousState=state;
   reportPump(false); stopMotion(); state=next; entered=millis(); aimSet=false;
   if(next==HOMING) homed=false;
+  if(next==CHARACTERIZE && simulatedFlame && !simulatedFlameTimerStarted) {
+    simulatedFlameStarted=millis(); simulatedFlameTimerStarted=true;
+    Serial.println("FLAME SOURCE: SIMULATED - automatic rise begins in 3 seconds.");
+  }
   if(next==FIRE_CHECK) { checkFrame=frameId; checkSawFrame=false; clearSince=0; }
   Serial.printf("STATE,%d\n",int(next));
   Serial.printf("STATE CHANGE: %d %s -> %d %s | start=%s home=%s\n",
@@ -105,8 +109,14 @@ void checkLimitSwitch() {
 
 // EVENT CHECKER: Read a camera message or a start/stop command.
 void acceptLine(char *line) {
+  while(*line==' ' || *line=='\t') ++line;
+  size_t length=strlen(line);
+  while(length>0 && (line[length-1]==' ' || line[length-1]=='\t')) line[--length]=0;
+  for(size_t i=0;i<length;++i)
+    if(line[i]>='a' && line[i]<='z') line[i]=line[i]-'a'+'A';
   if(!strcmp(line,"SIM_FLAME") || !strcmp(line,"REAL_FLAME")) {
     simulatedFlame=!strcmp(line,"SIM_FLAME"); simulatedFlameStarted=millis();
+    simulatedFlameTimerStarted=simulatedFlame;
     flameTotal=0; flameIndex=0; flameCount=0; infraredFire=false;
     for(int i=0;i<FLAME_SAMPLE_COUNT;++i) flameSamples[i]=0;
     Serial.println(simulatedFlame?
@@ -128,7 +138,10 @@ void acceptLine(char *line) {
     return;
   }
   int detected=-1, consumed=0; float d=0,c=0;
-  if(sscanf(line,"FIRE,%d,%f,%f%n",&detected,&d,&c,&consumed)!=3 || line[consumed]) return;
+  if(sscanf(line,"FIRE,%d,%f,%f%n",&detected,&d,&c,&consumed)!=3 || line[consumed]) {
+    Serial.println("COMMAND NOT RECOGNIZED: use sim_near, sim_far, sim_clear, sim_flame, real_flame, or stop.");
+    return;
+  }
   if((detected!=0 && detected!=1) || !isfinite(d) || !isfinite(c) || c<0 || c>1) return;
   if(detected && (d<=0 || c<=0.40f)) return;
   demoCamera=false;
@@ -172,7 +185,7 @@ bool targetInRange() { return distanceM>=MIN_RANGE_M && distanceM<=MAX_RANGE_M; 
 // SERVICE FUNCTION: Create a timed simulated flame reading with small random variations.
 int readFlameInput() {
   if(!simulatedFlame) return analogRead(FLAME_PIN);
-  uint32_t t=millis()-simulatedFlameStarted;
+  uint32_t t=simulatedFlameTimerStarted?millis()-simulatedFlameStarted:0;
   int level=600;
   if(t>=3000 && t<7000) level=600+int((t-3000)*2600/4000);
   else if(t>=7000 && t<15000) level=3200;
@@ -345,6 +358,8 @@ void setup() {
   Serial.println("BOOT CHECK: analog input GPIO34 ready"); Serial.flush();
   startRaw=startStable=previousStart=(digitalRead(START_PIN)==LOW);
   releasedBeforeStart=!startRaw; startChanged=millis(); entered=millis();
+  Serial.println("FLAME SOURCE: SIMULATED by default; first Characterize starts the 3-second delay.");
+  Serial.println("COMMANDS: upper/lowercase accepted. Set Serial Monitor line ending to Newline.");
   Serial.println("SIMULATED CAMERA: SIM_NEAR, SIM_FAR, SIM_CLEAR, SIM_OFF; STOP enters Fault.");
   Serial.println("FLAME COMMANDS: SIM_FLAME starts a simulated rise/fall; REAL_FLAME restores the sensor.");
   Serial.println("WAIT_START: open the start switch, then close it to start.");

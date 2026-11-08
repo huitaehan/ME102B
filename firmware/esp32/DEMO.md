@@ -119,7 +119,10 @@ all state-machine functions, and all global variables; open/copy the entire file
 
 ## Simulated analog flame input
 
-SensorDemo starts with the real analog input. Send `SIM_FLAME` to select an
+SensorDemo now starts with a simulated analog input. Its timer starts automatically
+on first entry to Characterize; the value stays low for three seconds before
+rising. Commands accept upper/lowercase and surrounding spaces. Send `SIM_FLAME`
+to restart the timer manually. The profile is an
 explicitly simulated analog source: 3 seconds around 600 ADC counts, a 4-second
 rise to 3200, 8 seconds around 3200, a 3-second fall, then remain around 600.
 Small pseudorandom variations of +/-50 counts are added. Repeating SIM_FLAME
@@ -137,3 +140,7 @@ IR to fall/clear to demonstrate Fire check -> Search. Simulated flame readings d
 not themselves clear the camera; SIM_NEAR remains active until changed.
 This is software simulation, not evidence of a working analog sensor. Disclose
 it in the video and confirm instructor acceptance for the analog-sensor requirement.
+
+Use `sim_far` to select 3 m and reach Drive after analog confirmation; `sim_near`
+selects 0.8 m and leads to Calculate & aim. The camera source must still be selected
+explicitly. `real_flame` restores real input and calibration requirements.
