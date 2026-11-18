@@ -5,6 +5,8 @@ import time
 # CAM,deg     tilt the camera to this angle above horizontal
 # DRIVE,m     drive straight forward this far
 # Every command is answered with DONE or ERR,reason.
+# YAW must be implemented as a chassis/base turn, not an independent turret axis.
+# The integrated ESP32 currently rejects YAW: wheel hardware is not configured.
 
 YAWS = [0, 45, -45]
 PITCHES = [0, 45, -45]
@@ -18,6 +20,20 @@ def run(send_and_wait, command):
     reply = send_and_wait(command)
     if not reply.startswith("DONE"):
         raise RuntimeError(f"{command} -> {reply}")
+
+
+def fire_yaw_command(current_yaw_deg, relative_turn_deg):
+    """Return YAW in the AIM_SET heading frame; never send a relative error as YAW.
+
+    current_yaw_deg must come from measured base heading relative to AIM_SET.
+    relative_turn_deg is Pi vision guidance, positive left. Reobserve after each
+    completed turn. No heading feedback or drive hardware is implemented here.
+    """
+    import math
+    if not all(math.isfinite(v) for v in (current_yaw_deg, relative_turn_deg)):
+        raise ValueError('Heading and turn must be finite')
+    target = (current_yaw_deg + relative_turn_deg + 180) % 360 - 180
+    return f'YAW,{target:.3f}'
 
 
 def search(send_and_wait, detect_fire, max_cycles=4):
