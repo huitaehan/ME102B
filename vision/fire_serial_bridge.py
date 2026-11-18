@@ -5,6 +5,11 @@ import math
 from pathlib import Path
 import time
 
+if __package__:
+    from .base_guidance import guidance_from_boxes
+else:
+    from base_guidance import guidance_from_boxes
+
 SOLVER_PATH = Path(__file__).resolve().parents[1] / 'Calcs and Shooting' / 'Projectile Motion Calculation.py'
 _spec = importlib.util.spec_from_file_location('projectile_solver', SOLVER_PATH)
 solver = importlib.util.module_from_spec(_spec)
@@ -50,6 +55,36 @@ def observation(boxes, flame_height_cm, focal_length_px):
     return f'FIRE,1,{metres:.4f},{float(box.conf[0]):.4f}\n'
 
 
+def mock_target_message(sequence, guidance):
+    """Atomic bearing/distance observation for the explicitly simulated ESP32 run."""
+    if guidance is None:
+        return f'TARGET,{sequence},0,0,0,0\n'
+    return (f'TARGET,{sequence},1,{guidance.distance_m:.4f},'
+            f'{guidance.confidence:.4f},{guidance.yaw_error_deg:.3f}\n')
+
+
+def start_mock_session(link, timeout=4.0):
+    """Refuse physical/old firmware; start only an explicitly advertised mock."""
+    link.write(b'CAPS\n')
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        line = link.readline().decode('ascii', errors='replace').strip()
+        if line.startswith('CAPS,') and 'MOCK_BASE_V1' in line.split(','):
+            break
+    else:
+        raise RuntimeError('ESP32 does not advertise MOCK_BASE_V1; upload demo FireTurret firmware')
+    link.write(b'MOCK_START\n')
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        line = link.readline().decode('ascii', errors='replace').strip()
+        if line.startswith('MOCK_READY,'):
+            print(line, flush=True)
+            return
+        if line.startswith('ERR,MOCK_START'):
+            raise RuntimeError(line + '; reset ESP32 before another mock run')
+    raise RuntimeError('ESP32 did not acknowledge MOCK_START')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--port', required=True, help='e.g. /dev/ttyUSB0 or COM5')
@@ -70,7 +105,34 @@ def main():
     parser.add_argument('--turret-x-m', type=float, default=0.0, help='Pivot offset from camera distance reference')
     parser.add_argument('--turret-y-m', type=float, default=0.0)
     parser.add_argument('--base-height-m', type=float, default=0.0)
+    parser.add_argument('--base-guidance', action='store_true',
+                        help='Select closest fire and PRINT relative base turn (no wheel actuation)')
+    parser.add_argument('--horizontal-focal-px', type=float,
+                        help='Horizontal focal length at capture resolution; default assumes square pixels')
+    parser.add_argument('--camera-yaw-deg', type=float, default=0.0)
+    parser.add_argument('--alignment-deadband-deg', type=float, default=3.0)
+    parser.add_argument('--mock-base', action='store_true',
+                        help='Send TARGET observations to DEMO_MODE ESP32; simulate all actuators/sensors')
     args = parser.parse_args()
+    if args.mock_base:
+        args.base_guidance = True
+        if args.start:
+            parser.error('Use --mock-base without --start')
+        if args.jet_speed_m_s is None:
+            parser.error('--mock-base needs --jet-speed-m-s (an example value is allowed for mock only)')
+    if args.base_guidance and args.imx500_model:
+        parser.error('Base guidance currently supports CPU image inference only')
+    horizontal_focal = (args.horizontal_focal_px if args.horizontal_focal_px is not None
+                        else args.focal_length_px)
+    if args.base_guidance:
+        try:
+            guidance_from_boxes([], frame_width=640, horizontal_focal_px=horizontal_focal,
+                                vertical_focal_px=args.focal_length_px,
+                                flame_height_cm=args.flame_height_cm,
+                                camera_yaw_deg=args.camera_yaw_deg,
+                                deadband_deg=args.alignment_deadband_deg)
+        except ValueError as exc:
+            parser.error(str(exc))
     if args.imx500_model and (not args.imx500_box_order or not args.imx500_box_units):
         parser.error('Verify and supply --imx500-box-order and --imx500-box-units')
     if args.imx500_model and not args.imx500_model.is_file():
@@ -120,8 +182,11 @@ def main():
                 raise RuntimeError('Camera failed to open')
         link = serial.Serial(args.port, 115200, timeout=0.1, write_timeout=1)
         time.sleep(2)  # Allow ESP32 USB auto-reset to finish.
+        if args.mock_base:
+            start_mock_session(link)
         if args.start:
             link.write(b'START\n')
+        sequence = 0
         while True:
             if args.imx500_model:
                 metadata = camera.capture_metadata()
@@ -140,7 +205,24 @@ def main():
             if not args.imx500_model:
                 results = model(frame, verbose=False)
                 boxes = [box for result in results for box in result.boxes]
-                message = observation(boxes, args.flame_height_cm, args.focal_length_px)
+                if args.base_guidance:
+                    guidance = guidance_from_boxes(
+                        boxes, frame_width=frame.shape[1], horizontal_focal_px=horizontal_focal,
+                        vertical_focal_px=args.focal_length_px,
+                        flame_height_cm=args.flame_height_cm, fire_class=args.fire_class,
+                        camera_yaw_deg=args.camera_yaw_deg,
+                        deadband_deg=args.alignment_deadband_deg)
+                    if guidance is None:
+                        message = 'FIRE,0,0,0\n'
+                        print('BASE_GUIDANCE,0,0,0', flush=True)
+                    else:
+                        message = f'FIRE,1,{guidance.distance_m:.4f},{guidance.confidence:.4f}\n'
+                        print(guidance.diagnostic(), flush=True)
+                    if args.mock_base:
+                        sequence += 1
+                        message = mock_target_message(sequence, guidance)
+                else:
+                    message = observation(boxes, args.flame_height_cm, args.focal_length_px)
             if message is not None:
                 link.write(message.encode('ascii'))
             while link.in_waiting:

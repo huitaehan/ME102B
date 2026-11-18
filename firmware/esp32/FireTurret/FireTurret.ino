@@ -6,6 +6,12 @@
 
 constexpr bool DEMO_MODE=true;
 constexpr uint32_t DEMO_MOTION_MS=1000, DEMO_FRAME_MS=100;
+// Explicit MOCK_START is accepted ONLY in DEMO_MODE. No wheel GPIO is assigned.
+// Wheel diameter is confirmed; track width/counts are simulation examples only.
+constexpr float MOCK_WHEEL_DIAMETER_M=0.080f;
+constexpr float MOCK_TRACK_WIDTH_M=0.200f, MOCK_COUNTS_PER_WHEEL_REV=360.0f;
+constexpr float MOCK_MAX_TURN_DEG_S=30.0f, BASE_TOLERANCE_DEG=3.0f;
+constexpr uint32_t BASE_SETTLE_MS=500, BASE_TIMEOUT_MS=15000;
 
 constexpr int STEP_PIN=25, DIR_PIN=27, ENABLE_PIN=22;
 // Adafruit ESP32 Feather V2: MI/MISO=21, home=33, A2=34.
@@ -30,7 +36,7 @@ constexpr uint32_t VISION_TIMEOUT_MS=1500, HOMING_TIMEOUT_MS=15000;
 constexpr uint32_t SHOOT_MS=3000, SETTLE_MS=500, CLEAR_MS=2000;
 
 enum State { WAIT_START, HOMING, SEARCH, CHARACTERIZE, DRIVE,
-             CALCULATE_AIM, SHOOT, FIRE_CHECK, FAULT };
+             CALCULATE_AIM, SHOOT, FIRE_CHECK, FAULT, ALIGN_BASE };
 State state=WAIT_START;
 uint32_t entered=0, lastVision=0, frameId=0, checkFrame=0;
 uint32_t nextStep=0, pulseStarted=0, switchChanged=0, clearSince=0;
@@ -52,6 +58,17 @@ bool demoCamera=false, demoFire=false;
 float demoDistanceM=0.8f;
 uint32_t demoLastFrame=0, demoMotionStarted=0;
 char input[96]; size_t inputLength=0; bool dropping=false;
+bool mockRun=false, haveBearing=false, mockAligned=false;
+uint32_t targetSequence=0, baseUpdatedAt=0, baseReportedAt=0;
+uint32_t alignedSince=0, alignedFrames=0, baseCheckedFrame=0;
+float baseHeadingDeg=0, bearingDeg=0, bearingHeadingDeg=0;
+float mockLeftM=0, mockRightM=0, mockLeftSpeed=0, mockRightSpeed=0;
+
+float baseErrorDeg() { return bearingDeg-(baseHeadingDeg-bearingHeadingDeg); }
+bool baseAligned() {
+  return mockRun && haveBearing && mockAligned && targetVisible() &&
+         fabsf(baseErrorDeg())<=BASE_TOLERANCE_DEG;
+}
 
 // SERVICE FUNCTION: Turn the water pump on or off.
 void pump(bool on) {
@@ -65,13 +82,17 @@ void stopMotion() { target=position; }
 // SERVICE FUNCTION: Change the state and turn the pump off.
 void transition(State next) {
   pump(false); stopMotion(); state=next; entered=millis(); aimSet=false; aimPending=false;
+  mockLeftSpeed=mockRightSpeed=0; baseUpdatedAt=millis();
+  if(next==ALIGN_BASE) {
+    mockAligned=false; alignedFrames=0; alignedSince=0; baseCheckedFrame=frameId;
+  }
   if(next==HOMING) homed=false;
   if(next==FIRE_CHECK) { checkFrame=frameId; checkSawFrame=false; clearSince=0; }
   if(next==FAULT && !DEMO_MODE) digitalWrite(ENABLE_PIN,HIGH);
   Serial.printf("STATE,%d\n",int(next));
   if(DEMO_MODE) {
     const char *names[]={"Wait for start","Homing","Search","Characterize","Drive",
-                         "Calculate & aim","Shoot","Fire check","Fault"};
+                         "Calculate & aim","Shoot","Fire check","Fault","Align base (mock)"};
     Serial.printf("DEMO STATE: %s\n",names[int(next)]);
     if(next==HOMING) Serial.println("DEMO ACTION: motor disabled; press the real home switch.");
     if(next==DRIVE) Serial.println("DEMO ACTION: driving is not implemented.");
@@ -103,6 +124,35 @@ void checkLimitSwitch() {
 void acceptLine(char *line) {
   if(!strcmp(line,"CAPS")) {
     Serial.println("CAPS,FIRE,AIM_REQUEST,AIM_RESULT,AIM_ERROR,STOP,ELEVATION_ONLY");
+    if(DEMO_MODE) Serial.println("CAPS,MOCK_BASE_V1,TARGET,MOCK_START");
+    return;
+  }
+  if(!strcmp(line,"MOCK_START")) {
+    if(!DEMO_MODE || state!=WAIT_START) {
+      Serial.println("ERR,MOCK_START,NOT_ALLOWED"); return;
+    }
+    mockRun=true; demoCamera=false; homed=true; position=target=0;
+    haveBearing=haveVision=fire=mockAligned=false; targetSequence=0;
+    baseHeadingDeg=mockLeftM=mockRightM=0;
+    Serial.println("MOCK_READY,80MM_WHEELS,TRACK_200MM_EXAMPLE,COUNTS_360_EXAMPLE");
+    Serial.println("MOCK: homing and infrared simulated; all actuator GPIO disabled");
+    transition(SEARCH); return;
+  }
+  if(!strncmp(line,"TARGET,",7)) {
+    if(!DEMO_MODE || !mockRun) { Serial.println("ERR,TARGET,MOCK_NOT_STARTED"); return; }
+    unsigned long sequence=0; int detected=-1, used=0;
+    float d=0,c=0,yaw=0;
+    if(sscanf(line,"TARGET,%lu,%d,%f,%f,%f%n",&sequence,&detected,&d,&c,&yaw,&used)!=5 ||
+       line[used] || sequence==0 || sequence<=targetSequence ||
+       (detected!=0 && detected!=1) || !isfinite(d) || !isfinite(c) ||
+       !isfinite(yaw) || c<0 || c>1 || fabsf(yaw)>180 ||
+       (detected && (d<=0 || c<=0.40f))) {
+      Serial.println("ERR,TARGET,INVALID_OR_OLD"); return;
+    }
+    targetSequence=sequence; fire=detected; distanceM=d; confidence=c;
+    haveVision=haveBearing=true; lastVision=millis(); ++frameId;
+    bearingDeg=yaw; bearingHeadingDeg=baseHeadingDeg;
+    if(!fire || fabsf(yaw)>BASE_TOLERANCE_DEG) mockAligned=false;
     return;
   }
   // The merged reference sketch acknowledged these without executing motion.
@@ -123,6 +173,7 @@ void acceptLine(char *line) {
   }
   if(DEMO_MODE && (!strcmp(line,"SIM_NEAR") || !strcmp(line,"SIM_FAR") ||
                    !strcmp(line,"SIM_CLEAR") || !strcmp(line,"SIM_OFF"))) {
+    if(mockRun) { Serial.println("ERR,SIM,USE_TARGET_IN_MOCK"); return; }
     demoCamera=strcmp(line,"SIM_OFF")!=0;
     demoFire=strcmp(line,"SIM_CLEAR")!=0;
     demoDistanceM=!strcmp(line,"SIM_FAR")?3.0f:0.8f;
@@ -146,6 +197,7 @@ void acceptLine(char *line) {
   }
   int detected=-1, consumed=0; float d=0,c=0;
   if(sscanf(line,"FIRE,%d,%f,%f%n",&detected,&d,&c,&consumed)!=3 || line[consumed]) return;
+  if(mockRun) { Serial.println("ERR,FIRE,USE_TARGET_IN_MOCK"); return; }
   if((detected!=0 && detected!=1) || !isfinite(d) || !isfinite(c) || c<0 || c>1) return;
   if(detected && (d<=0 || c<=0.40f)) return;
   demoCamera=false;
@@ -188,6 +240,7 @@ bool targetInRange() { return distanceM>=MIN_RANGE_M && distanceM<=MAX_RANGE_M; 
 
 // SERVICE FUNCTION: Read and average the analog flame sensor without waiting.
 void serviceFlameSensor() {
+  if(mockRun && DEMO_MODE) { infraredFire=fire; return; }
   uint32_t now=millis();
   if(now-lastFlameSample<FLAME_SAMPLE_MS) return;
   lastFlameSample=now;
@@ -208,6 +261,7 @@ void serviceFlameSensor() {
 
 // EVENT CHECKER: Check if the flame sensor is calibrated and has recent readings.
 bool flameSensorReady() {
+  if(mockRun && DEMO_MODE) return true;
   bool thresholdsValid=FLAME_ON_THRESHOLD>=0 && FLAME_ON_THRESHOLD<=4095 &&
     FLAME_OFF_THRESHOLD>=0 && FLAME_OFF_THRESHOLD<=4095 &&
     (FLAME_HIGH_MEANS_FIRE ? FLAME_ON_THRESHOLD>FLAME_OFF_THRESHOLD :
@@ -281,6 +335,38 @@ bool calculateAngle(float range,float &degrees) {
 // SERVICE FUNCTION: Leave driving blank until the drive system is added.
 void serviceDrive() {   }
 
+// SERVICE FUNCTION: Differential-base simulation; never writes wheel GPIOs.
+void serviceMockBase() {
+  if(!DEMO_MODE || !mockRun) return;
+  uint32_t now=millis();
+  float dt=fminf((now-baseUpdatedAt)/1000.0f,0.1f); baseUpdatedAt=now;
+  mockLeftSpeed=mockRightSpeed=0;
+  if(state==ALIGN_BASE && targetVisible() && haveBearing) {
+    float error=baseErrorDeg();
+    if(fabsf(error)>BASE_TOLERANCE_DEG) {
+      alignedFrames=0; alignedSince=0; mockAligned=false;
+      float rate=fmaxf(-MOCK_MAX_TURN_DEG_S,fminf(MOCK_MAX_TURN_DEG_S,2.0f*error));
+      float delta=rate*dt;
+      if(fabsf(delta)>fabsf(error)) delta=error;
+      baseHeadingDeg+=delta;
+      float rightTravel=delta*(PI/180.0f)*MOCK_TRACK_WIDTH_M/2.0f;
+      mockLeftM-=rightTravel; mockRightM+=rightTravel;
+      if(dt>0) { mockLeftSpeed=-rightTravel/dt; mockRightSpeed=rightTravel/dt; }
+    } else if(frameId!=baseCheckedFrame) {
+      if(alignedFrames==0) alignedSince=now;
+      ++alignedFrames;
+      if(alignedFrames>=2 && now-alignedSince>=BASE_SETTLE_MS) mockAligned=true;
+    }
+    baseCheckedFrame=frameId;
+  }
+  if(now-baseReportedAt>=200) {
+    baseReportedAt=now;
+    float ticksPerM=MOCK_COUNTS_PER_WHEEL_REV/(PI*MOCK_WHEEL_DIAMETER_M);
+    Serial.printf("BASE_MOCK,%.3f,%.2f,%.2f,%.4f,%.4f\n",baseHeadingDeg,
+      mockLeftM*ticksPerM,mockRightM*ticksPerM,mockLeftSpeed,mockRightSpeed);
+  }
+}
+
 // SERVICE FUNCTION: Leave physical scanning blank; the camera looks for fire.
 void serviceSearch() {   }
 
@@ -302,16 +388,22 @@ void serviceStateMachine() {
       break;
     case SEARCH:
 
-      if(startButtonPressed()) { transition(HOMING); break; }
+      if(!mockRun && startButtonPressed()) { transition(HOMING); break; }
 
       serviceSearch();
-      if(motionDone() && switchStable) { transition(FAULT); break; }
+      if(!mockRun && motionDone() && switchStable) { transition(FAULT); break; }
       if(motionDone() && targetVisible()) transition(CHARACTERIZE);
       break;
     case CHARACTERIZE:
 
       if(!targetVisible()) transition(SEARCH);
+      else if(mockRun && !baseAligned()) transition(ALIGN_BASE);
       else if(flameConfirmed()) transition(targetInRange()?CALCULATE_AIM:DRIVE);
+      break;
+    case ALIGN_BASE:
+      if(!targetVisible() || !haveBearing) transition(SEARCH);
+      else if(elapsed(BASE_TIMEOUT_MS)) transition(FAULT);
+      else if(baseAligned()) transition(CHARACTERIZE);
       break;
     case DRIVE:
 
@@ -322,18 +414,19 @@ void serviceStateMachine() {
     case CALCULATE_AIM:
 
       if(!targetVisible()) { transition(SEARCH); break; }
+      if(mockRun && !baseAligned()) { transition(ALIGN_BASE); break; }
       if(!flameConfirmed()) { transition(CHARACTERIZE); break; }
       if(!targetInRange()) { transition(DRIVE); break; }
-      if(!DEMO_MODE && (aimPending || aimSet) && fabsf(distanceM-aimDistanceM)>0.05f) {
+      if((!DEMO_MODE || mockRun) && (aimPending || aimSet) && fabsf(distanceM-aimDistanceM)>0.05f) {
         transition(CHARACTERIZE); break;
       }
       if(!aimSet && !aimPending) {
-        if(DEMO_MODE) {
+        if(DEMO_MODE && !mockRun) {
           float angle;
           if(!calculateAngle(distanceM,angle)) { transition(FAULT); break; }
           aimAt(angle); aimSet=true;
         } else {
-          if(!CALIBRATED) { transition(FAULT); break; }
+          if(!CALIBRATED && !mockRun) { transition(FAULT); break; }
           ++aimRequestId; aimDistanceM=distanceM; aimRequestedAt=millis(); aimPending=true;
           Serial.printf("AIM_REQUEST,%lu,%.4f,%.2f,%.2f\n",
                         (unsigned long)aimRequestId,aimDistanceM,MIN_ANGLE,MAX_ANGLE);
@@ -344,7 +437,7 @@ void serviceStateMachine() {
       break;
     case SHOOT:
 
-      if(!visionFresh() || !fire || !targetInRange()) transition(FIRE_CHECK);
+      if(!visionFresh() || !fire || !targetInRange() || (mockRun && !baseAligned())) transition(FIRE_CHECK);
       else if(elapsed(SHOOT_MS)) transition(FIRE_CHECK);
       break;
     case FIRE_CHECK:
@@ -398,6 +491,6 @@ void setup() {
 
 // SERVICE FUNCTION: Keep checking inputs and running the state machine and motor.
 void loop() {
-  serviceFlameSensor(); checkSerial(); serviceDemoCamera(); checkStartButton(); checkLimitSwitch(); serviceStateMachine(); serviceStepper(); reportFlameSensor();
+  serviceFlameSensor(); checkSerial(); serviceDemoCamera(); checkStartButton(); checkLimitSwitch(); serviceStateMachine(); serviceMockBase(); serviceStepper(); reportFlameSensor();
   delay(1);
 }

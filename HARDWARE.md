@@ -5,6 +5,11 @@ Confirmed by the project owner:
 - Controller: Adafruit ESP32 Feather V2 (ESP32-PICO-MINI-02).
 - Vision computer: Raspberry Pi 5 with Raspberry Pi AI Camera (IMX500).
 - NEMA17 controls nozzle elevation. Robot drive motors provide horizontal aiming.
+- Turret stepper driver: DRV8825 (STEP/DIR interface).
+- Drive: two JGA25-370 brushed geared DC motors, one DRV8871 per wheel.
+- Wheels: Pololu multi-hub 80 x 10 mm (80 mm nominal diameter), with inserts
+  for 3/4 mm shafts. Motor voltage/gear ratio/shaft fit still need confirmation.
+- Drive wheels have encoders; they are not yet connected to the ESP32.
 - Start switch: Feather MI/MISO, GPIO21, to GND.
 - Home switch: GPIO33 to NO, GND to COM.
 - Analog flame signal: A2/GPIO34; sensor VCC to 3V, GND to GND.
@@ -21,10 +26,11 @@ and detection accuracy must be verified on the physical camera before use.
 
 Still needed for physical implementation:
 
-- NEMA17 driver model, STEP/DIR/enable wiring, microstepping, gearing, direction,
+- DRV8825 STEP/DIR/enable wiring, microstepping, gearing, direction,
   home angle and mechanical travel limits.
-- Wheel motor types, driver models and wiring, encoder specifications, wheel
-  diameter and track width. Confirm whether an IMU is available for heading.
+- DRV8871 wiring, exact JGA25-370 voltage/gear ratio, encoder specifications,
+  measured track width and effective loaded wheel diameter. Confirm whether an
+  IMU is available for heading. Nominal wheel diameter is 80 mm.
 - Pump model/supply, switching driver and wiring, active level.
 - Whether the camera is fixed to the chassis or moves with nozzle elevation.
 - Nozzle geometry, measured jet speed, camera distance calibration, and analog

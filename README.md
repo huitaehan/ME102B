@@ -58,6 +58,14 @@ assets/
 
 ## Sensor-only demo
 
+For a motor-free Pi/ESP32 base-turn and projectile integration test, see
+[Mock rover instructions](firmware/esp32/MOCK_ROVER.md). Upload FireTurret in
+DEMO_MODE and run `python vision/mock_rover_demo.py --port /dev/ttyUSB0`.
+This explicitly simulates homing, IR, wheel encoders, elevation and pumping;
+the projectile angle is calculated by the actual Pi solver. Wheel diameter is
+80 mm; mock track width and encoder resolution are illustrative placeholders.
+Physical YAW/DRIVE execution remains unimplemented.
+
 For the current three-input test, open `firmware/esp32/SensorDemo/SensorDemo.ino`.
 It assigns only the start switch (GPIO21), home switch (GPIO33), and analog flame
 sensor (GPIO34), with no actuator GPIOs. Its aiming/pumping actions are simulations.
