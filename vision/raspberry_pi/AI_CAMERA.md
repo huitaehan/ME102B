@@ -2,6 +2,22 @@
 
 ## Preferred dual-camera design: IMX500 detection + D435i depth only
 
+### Before the rigid mount is ready
+
+Test the devices independently. Keep the IMX500 preview on port 8080, then run:
+
+```sh
+.venv/bin/python vision/raspberry_pi/realsense_depth_test.py
+```
+
+In a second laptop terminal forward `8081:127.0.0.1:8081` through SSH to the Pi,
+then open localhost:8081. Manually aim the D435i crosshair at the same solid
+object shown to the AI Camera. Compare depth readings with a ruler at several
+distances. A fire photo's depth is the screen/paper surface, not the pictured fire.
+The script needs a working `pyrealsense2` installation and does not run YOLO or
+send ESP32 commands. `--no-preview` prints readings in the SSH terminal only.
+It does not establish automatic association between separate camera images.
+
 This mode runs the fire model on the IMX500 accelerator. D435i provides depth
 points only at runtime; its RGB stream and the Pi CPU neural-network detector
 are not used. Pi handles tensor decoding, coordinate transforms, preview,

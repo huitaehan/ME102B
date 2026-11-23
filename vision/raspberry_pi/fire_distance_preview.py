@@ -4,6 +4,7 @@ Uses the AI Camera as an image source; no compiled IMX500 model is required.
 """
 
 import argparse
+from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import math
 from pathlib import Path
@@ -25,16 +26,17 @@ class PreviewHandler(BaseHTTPRequestHandler):
                 return
             content_type = 'image/jpeg'
         elif self.path == '/':
+            title = escape(getattr(self.server, 'preview_title', 'Fire detection and distance'))
+            caption = escape(getattr(self.server, 'preview_caption',
+                                     'Check the distance source and validity shown in the image.'))
             data = (
-                b'<!doctype html><title>Fire distance preview</title>'
-                b'<h1>Fire detection and distance</h1>'
-                b'<p>Check the distance source and validity shown in the image.</p>'
-                b'<img id="feed" style="width:640px;max-width:100%;height:auto" alt="Live detections">'
-                b'<script>const feed=document.getElementById("feed");'
-                b'function refresh(){feed.src="/frame.jpg?t="+Date.now();}'
-                b'feed.onload=()=>setTimeout(refresh,50);'
-                b'feed.onerror=()=>setTimeout(refresh,500);refresh();</script>'
-            )
+                f'<!doctype html><title>{title}</title><h1>{title}</h1><p>{caption}</p>'
+                '<img id="feed" style="width:640px;max-width:100%;height:auto" alt="Camera preview">'
+                '<script>const feed=document.getElementById("feed");'
+                'function refresh(){feed.src="/frame.jpg?t="+Date.now();}'
+                'feed.onload=()=>setTimeout(refresh,50);'
+                'feed.onerror=()=>setTimeout(refresh,500);refresh();</script>'
+            ).encode('utf-8')
             content_type = 'text/html; charset=utf-8'
         else:
             self.send_error(404)
