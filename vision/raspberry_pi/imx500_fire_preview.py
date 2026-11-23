@@ -1,7 +1,8 @@
 """Test fire RPK on IMX500 accelerator, without D435i, CPU YOLO or ESP32.
 
-First use --inspect to check tensor shapes/values. Preview requires explicit
-box-order/units and uses the same localhost:8080 SSH tunnel as earlier viewers.
+Use --inspect for tensor summaries or --raw-preview to see framing while the
+model runs. Detection boxes require explicit box-order/units. All previews use
+the same localhost:8080 SSH tunnel as earlier viewers.
 """
 
 import argparse
@@ -20,7 +21,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--model', type=Path, default=(
         Path(__file__).resolve().parents[2]/'models/imx500/packaged/network.rpk'))
-    parser.add_argument('--inspect', action='store_true', help='Print three inference tensor summaries and exit')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--inspect', action='store_true', help='Print three inference tensor summaries and exit')
+    mode.add_argument('--raw-preview', action='store_true',
+                      help='Show camera image and print tensor summaries without guessing box format')
     parser.add_argument('--box-order', choices=('xyxy', 'yxyx'))
     parser.add_argument('--box-units', choices=('normalized', 'pixels'))
     parser.add_argument('--fire-class', type=int, default=0)
@@ -28,7 +32,7 @@ def main():
     args = parser.parse_args()
     if not args.model.is_file():
         parser.error(f'RPK not found: {args.model}')
-    if not args.inspect and not (args.box_order and args.box_units):
+    if not args.inspect and not args.raw_preview and not (args.box_order and args.box_units):
         parser.error('First use --inspect; preview requires --box-order and --box-units')
 
     import cv2
@@ -62,9 +66,9 @@ def main():
                 image = request.make_array('main').copy() if not args.inspect else None
                 if outputs is not None:
                     last_inference = time.monotonic()
-                elif time.monotonic()-last_inference > 60:
+                elif not args.raw_preview and time.monotonic()-last_inference > 60:
                     raise RuntimeError('No inference metadata for 60 seconds; check RPK/camera output')
-                if args.inspect:
+                if args.inspect or (args.raw_preview and summaries < 3):
                     if outputs is not None:
                         print(f'Inference sample {summaries+1}: {len(outputs)} tensors', flush=True)
                         for index, output in enumerate(outputs):
@@ -72,16 +76,20 @@ def main():
                             print(f'  tensor[{index}] shape={array.shape} first_values='
                                   f'{array.reshape(-1)[:12].tolist()}', flush=True)
                         summaries += 1
-                        if summaries >= 3:
+                        if args.inspect and summaries >= 3:
                             return
-                    continue
-                boxes = preview_boxes_from_outputs(
+                    if args.inspect:
+                        continue
+                boxes = [] if args.raw_preview else preview_boxes_from_outputs(
                     outputs, box_order=args.box_order, box_units=args.box_units,
                     input_size=imx.get_input_size(), fire_class=args.fire_class,
                     convert_coords=lambda coords: imx.convert_inference_coords(coords, metadata, camera))
             finally:
                 request.release()
-            if boxes is None:
+            if args.raw_preview:
+                status = ('Raw preview | inference received' if outputs is not None else
+                          'Raw preview | waiting for inference')
+            elif boxes is None:
                 status = 'Waiting for fresh inference'
             else:
                 status = f'IMX500: {len(boxes)} fire detection(s)'

@@ -92,6 +92,16 @@ on Raspberry Pi OS. Source: https://www.raspberrypi.com/documentation/accessorie
 
 ## Verify before operating actuators
 
+To see the camera while inspecting the model without guessing box coordinates:
+
+```sh
+.venv/bin/python vision/raspberry_pi/imx500_fire_preview.py --raw-preview
+```
+
+Open localhost:8080 through the existing SSH tunnel. This keeps showing the image
+even if inference metadata is missing, and prints the first three tensor summaries
+when available. There are no detection boxes until the format is verified.
+
 Test the packaged fire network without ESP32 or RealSense first:
 
 ```sh
