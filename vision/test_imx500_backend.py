@@ -1,9 +1,20 @@
 import unittest
 
-from imx500_backend import observation_from_outputs
+from imx500_backend import observation_from_outputs, preview_boxes_from_outputs
 
 
 class Imx500Tests(unittest.TestCase):
+    def test_weak_valid_detection_can_be_shown_at_diagnostic_threshold(self):
+        outputs = [[[[314., 23., 557., 225.]]], [[0.26953125]], [[0.]], [[1.]]]
+        kwargs = dict(box_order='xyxy', box_units='pixels', input_size=(640, 640),
+                      convert_coords=lambda coords: (10, 20, 30, 40))
+        self.assertEqual(preview_boxes_from_outputs(outputs, **kwargs), [])
+        self.assertEqual(len(preview_boxes_from_outputs(
+            outputs, confidence_threshold=0.20, **kwargs)), 1)
+        outputs[3] = [[0.]]
+        self.assertEqual(preview_boxes_from_outputs(
+            outputs, confidence_threshold=0.20, **kwargs), [])
+
     def decode(self, outputs, units='pixels'):
         return observation_from_outputs(
             outputs, box_order='yxyx', box_units=units, input_height=640,

@@ -6,6 +6,7 @@ the same localhost:8080 SSH tunnel as earlier viewers.
 """
 
 import argparse
+import math
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 import sys
@@ -28,10 +29,14 @@ def main():
     parser.add_argument('--box-order', choices=('xyxy', 'yxyx'))
     parser.add_argument('--box-units', choices=('normalized', 'pixels'))
     parser.add_argument('--fire-class', type=int, default=0)
+    parser.add_argument('--confidence', type=float, default=0.40,
+                        help='Preview threshold only; does not change ESP32/bridge thresholds')
     parser.add_argument('--port', type=int, default=8080)
     args = parser.parse_args()
     if not args.model.is_file():
         parser.error(f'RPK not found: {args.model}')
+    if not math.isfinite(args.confidence) or not 0 <= args.confidence < 1:
+        parser.error('confidence must be between 0 and 1')
     if not args.inspect and not args.raw_preview and not (args.box_order and args.box_units):
         parser.error('First use --inspect; preview requires --box-order and --box-units')
 
@@ -58,6 +63,8 @@ def main():
         summaries = 0
         last_report = 0.0
         last_inference = time.monotonic()
+        last_boxes = None
+        last_decoded = 0.0
         while True:
             request = camera.capture_request()
             try:
@@ -83,17 +90,23 @@ def main():
                 boxes = [] if args.raw_preview else preview_boxes_from_outputs(
                     outputs, box_order=args.box_order, box_units=args.box_units,
                     input_size=imx.get_input_size(), fire_class=args.fire_class,
+                    confidence_threshold=args.confidence,
                     convert_coords=lambda coords: imx.convert_inference_coords(coords, metadata, camera))
             finally:
                 request.release()
             if args.raw_preview:
                 status = ('Raw preview | inference received' if outputs is not None else
                           'Raw preview | waiting for inference')
-            elif boxes is None:
-                status = 'Waiting for fresh inference'
             else:
-                status = f'IMX500: {len(boxes)} fire detection(s)'
-                for box in boxes:
+                now = time.monotonic()
+                if boxes is not None:
+                    last_boxes, last_decoded = boxes, now
+                # Briefly display recent results between inference frames, with
+                # an explicit age. Never reuse boxes in control/serial outputs.
+                display_boxes = last_boxes if now-last_decoded <= 0.5 else None
+                status = ('Waiting for fresh inference' if display_boxes is None else
+                          f'IMX500: {len(display_boxes)} | conf>{args.confidence:.2f} | age {now-last_decoded:.2f}s')
+                for box in display_boxes or []:
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
                     cv2.rectangle(image, (x1, y1), (x2, y2), (0, 0, 255), 2)
                     cv2.putText(image, f'Fire {box.conf[0]:.2f}', (max(0, x1), max(45, y1)),

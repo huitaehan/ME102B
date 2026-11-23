@@ -120,6 +120,14 @@ Use the existing port-8080 SSH tunnel/browser. This viewer uses the IMX500
 accelerator and never imports Ultralytics. It does not calculate distance.
 Check box placement with known fire/no-fire images before dual-camera calibration.
 
+If a valid detection has low confidence, `--confidence 0.20` can show weak boxes
+for diagnosis. This changes this viewer only; bridge/ESP32 thresholds remain 0.40.
+The viewer holds a decoded box for at most 0.5 seconds between inference frames
+and displays its age; this display cache is never sent to actuator control.
+Standard Ultralytics IMX500 exports use pixel xyxy coordinates (see
+https://docs.ultralytics.com/integrations/sony-imx500/); verify placement for this
+archive before treating its format or model identity as established.
+
 The existing archive contains a 640x640 input and four outputs: boxes, scores,
 classes and detection count. This is compatible in principle with the adapter's
 NMS interface, but the archive does not prove that it matches best.pt or establish

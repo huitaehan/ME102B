@@ -3,12 +3,14 @@ import math
 
 
 def preview_boxes_from_outputs(outputs, *, box_order, box_units, input_size,
-                               convert_coords, fire_class=0):
+                               convert_coords, fire_class=0, confidence_threshold=0.40):
     """Decode NMS and map normalized model yxyx through IMX500's crop mapper.
 
     convert_coords accepts normalized yxyx and returns preview x,y,width,height.
     Missing metadata returns None, never an empty no-fire observation.
     """
+    if not math.isfinite(confidence_threshold) or not 0 <= confidence_threshold < 1:
+        raise ValueError('Confidence threshold must be between 0 and 1')
     if outputs is None:
         return None
     import numpy as np
@@ -32,7 +34,7 @@ def preview_boxes_from_outputs(outputs, *, box_order, box_units, input_size,
                 or not 0 <= score <= 1 or not math.isfinite(float(category))
                 or category != int(category)):
             raise ValueError('Invalid detection values')
-        if category != fire_class or score <= 0.40:
+        if category != fire_class or score <= confidence_threshold:
             continue
         if box_order == 'xyxy':
             x1, y1, x2, y2 = map(float, box)
