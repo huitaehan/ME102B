@@ -27,9 +27,9 @@ class PreviewHandler(BaseHTTPRequestHandler):
         elif self.path == '/':
             data = (
                 b'<!doctype html><title>Fire distance preview</title>'
-                b'<h1>Fire detection and estimated distance</h1>'
-                b'<p>Distance depends on flame-height and camera calibration.</p>'
-                b'<img id="feed" width="640" height="640" alt="Live detections">'
+                b'<h1>Fire detection and distance</h1>'
+                b'<p>Check the distance source and validity shown in the image.</p>'
+                b'<img id="feed" style="width:640px;max-width:100%;height:auto" alt="Live detections">'
                 b'<script>const feed=document.getElementById("feed");'
                 b'function refresh(){feed.src="/frame.jpg?t="+Date.now();}'
                 b'feed.onload=()=>setTimeout(refresh,50);'

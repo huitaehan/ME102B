@@ -100,6 +100,75 @@ for the event conditions and services.
 
 ## Vision and serial bridge
 
+### AI Camera detection with D435i depth (preferred)
+
+Use the IMX500 accelerator for fire detection and D435i for depth only. The Pi
+maps D435i points into AI-camera coordinates using a measured stereo calibration;
+it does not run YOLO on the CPU in this mode. Rigid mounting and calibration must
+precede operation. See [AI Camera and dual-depth setup](vision/raspberry_pi/AI_CAMERA.md).
+`dual_fire_preview.py` provides headless preview; the integrated bridge uses
+`--imx500-model ... --dual-depth --dual-calibration ...`. A compiled fire-model
+RPK is required. The old `best.pt` preview was CPU inference.
+
+### Alternative: D435i RGB detection on CPU
+
+The D435i RGB image can now feed YOLO while its aligned depth supplies range.
+No assumed flame height or manually supplied focal length is used in this mode.
+It requires a Raspberry Pi-compatible `pyrealsense2`/librealsense installation.
+Check USB and Python SDK access from the Pi first:
+
+```sh
+lsusb
+lsusb -t
+.venv/bin/python -c "import pyrealsense2 as rs; print('RealSense devices:', len(rs.context().query_devices()))"
+```
+
+Use a USB 3 data cable/port and adequate Pi power. Do not blindly install the
+latest ARM PyPI wheel: current wheels target Jetson/CUDA, not generic Pi OS.
+See the [official Python wrapper](https://github.com/realsenseai/librealsense/tree/master/wrappers/python)
+and [Pi installation guidance](https://github.com/realsenseai/librealsense/blob/master/doc/installation_raspbian.md).
+The latter is an older Pi guide; adapt the build to this Pi OS/Python version.
+A source build should use CPU/libusb (`FORCE_RSUSB_BACKEND=ON`, `BUILD_WITH_CUDA=OFF`)
+and Python bindings for this project's `.venv` interpreter. Install the SDK's
+udev rules as instructed by its Linux setup guide. Package-install instructions
+for Ubuntu/Jetson must not be assumed valid for Raspberry Pi OS.
+
+Headless preview (no ESP32 required):
+
+```sh
+.venv/bin/python vision/raspberry_pi/realsense_fire_preview.py --list-devices
+.venv/bin/python vision/raspberry_pi/realsense_fire_preview.py
+```
+
+Keep the existing laptop SSH tunnel to port 8080, then open localhost:8080.
+Stop other camera preview/bridge processes first. The cyan patch shows which
+surface is sampled. `--depth-anchor center` samples the box centre; default
+`bottom` samples a patch inside the lower part of the detection. Flame gas may
+yield background depth or no depth. Verify the patch measures the burning object
+at known distances before accepting it as the target distance. A valid smooth
+depth return alone does not prove target association.
+
+The preview shows surface depth Z and horizontal ground-plane distance separately.
+The code deprojects using SDK intrinsics and projects onto the ground plane for
+the existing projectile solver. Mount the camera with zero roll; use
+`--camera-pitch-deg` for upward mounting pitch and `--camera-yaw-deg` for leftward
+mounting yaw. Camera/nozzle offsets and target height remain separate calibrations.
+The D435i IMU is not automatically used for orientation or rover heading.
+
+ESP32 demo integration, after validating preview measurements:
+
+```sh
+.venv/bin/python main.py --port /dev/ttyUSB0 --realsense --mock-base --jet-speed-m-s 5 --nozzle-length-m 0.1 --base-height-m 0.2 --target-height-m 0.2
+```
+
+These jet/geometry numbers are mock examples. Existing physical mode still needs
+all hardware calibrations; omit `--mock-base` for normal FIRE messages. Physical
+base turning remains unimplemented. In RealSense mode, any detected fire with
+invalid/sparse/mixed depth stops the bridge and sends STOP, rather than forwarding
+old distance or a false no-fire frame. STOP latches ESP32 Fault; reset before reuse.
+Capture errors likewise stop the bridge. RGB/depth frame acquisition, accuracy,
+fire association and full hardware operation have not been validated remotely.
+
 From the repository root, create a Python environment and install dependencies:
 
 ```sh

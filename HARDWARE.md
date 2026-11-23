@@ -4,6 +4,12 @@ Confirmed by the project owner:
 
 - Controller: Adafruit ESP32 Feather V2 (ESP32-PICO-MINI-02).
 - Vision computer: Raspberry Pi 5 with Raspberry Pi AI Camera (IMX500).
+- RealSense D435i is connected to Pi for measured depth. Preferred design uses
+  IMX500 accelerator detections plus D435i depth-only capture. A rigid common
+  mount is planned but not yet built; stereo calibration cannot be finalized
+  until mounting/focus are fixed. SDK access, fire RPK and depth association
+  require Pi validation. An optional D435i-RGB CPU detector is an alternative,
+  not the preferred pipeline. IMU data is not used by the current code.
 - NEMA17 controls nozzle elevation. Robot drive motors provide horizontal aiming.
 - Turret stepper driver: DRV8825 (STEP/DIR interface).
 - Drive: two JGA25-370 brushed geared DC motors, one DRV8871 per wheel.

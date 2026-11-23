@@ -89,15 +89,23 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--port', required=True, help='e.g. /dev/ttyUSB0 or COM5')
     parser.add_argument('--camera', default='0', help='OpenCV camera index or URL')
-    parser.add_argument('--picamera', action='store_true', help='Use Picamera2 on Pi')
-    parser.add_argument('--imx500-model', type=Path, help='Run inference on AI Camera using this RPK')
+    sources = parser.add_mutually_exclusive_group()
+    sources.add_argument('--picamera', action='store_true', help='Use Picamera2 on Pi')
+    sources.add_argument('--imx500-model', type=Path, help='Run inference on AI Camera using this RPK')
+    sources.add_argument('--realsense', action='store_true', help='YOLO on D435i RGB with aligned depth')
+    parser.add_argument('--dual-depth', action='store_true',
+                        help='Use IMX500 accelerator + D435i depth only; requires imx500-model and calibration')
+    parser.add_argument('--dual-calibration', type=Path)
+    parser.add_argument('--depth-anchor', choices=('center', 'bottom'), default='bottom')
+    parser.add_argument('--camera-pitch-deg', type=float, default=0.0,
+                        help='D435i mounting pitch above horizontal for ground-plane range')
     parser.add_argument('--imx500-box-order', choices=('xyxy', 'yxyx'))
     parser.add_argument('--imx500-box-units', choices=('normalized', 'pixels'))
     parser.add_argument('--fire-class', type=int, default=0)
     parser.add_argument('--model', default=str(Path(__file__).resolve().parents[1] / 'models/best.pt'))
     parser.add_argument('--flame-height-cm', type=float, default=5.0)
-    parser.add_argument('--focal-length-px', type=float, required=True,
-                        help='Repo defaults: 600 webcam; 490 Pi at 640x640. Calibrate.')
+    parser.add_argument('--focal-length-px', type=float,
+                        help='Required except with --realsense, which uses SDK intrinsics')
     parser.add_argument('--start', action='store_true', help='Bench test only: requires firmware ALLOW_SERIAL_START=true')
     parser.add_argument('--jet-speed-m-s', type=float, help='Measured jet exit speed for physical aiming')
     parser.add_argument('--target-height-m', type=float, default=0.0)
@@ -114,17 +122,23 @@ def main():
     parser.add_argument('--mock-base', action='store_true',
                         help='Send TARGET observations to DEMO_MODE ESP32; simulate all actuators/sensors')
     args = parser.parse_args()
+    if args.dual_depth and (not args.imx500_model or not args.dual_calibration):
+        parser.error('--dual-depth needs --imx500-model and --dual-calibration')
+    if not args.realsense and not args.dual_depth and args.focal_length_px is None:
+        parser.error('--focal-length-px is required unless using --realsense')
+    if args.realsense or args.dual_depth:
+        args.base_guidance = True
     if args.mock_base:
         args.base_guidance = True
         if args.start:
             parser.error('Use --mock-base without --start')
         if args.jet_speed_m_s is None:
             parser.error('--mock-base needs --jet-speed-m-s (an example value is allowed for mock only)')
-    if args.base_guidance and args.imx500_model:
+    if args.base_guidance and args.imx500_model and not args.dual_depth:
         parser.error('Base guidance currently supports CPU image inference only')
     horizontal_focal = (args.horizontal_focal_px if args.horizontal_focal_px is not None
                         else args.focal_length_px)
-    if args.base_guidance:
+    if args.base_guidance and not args.realsense and not args.dual_depth:
         try:
             guidance_from_boxes([], frame_width=640, horizontal_focal_px=horizontal_focal,
                                 vertical_focal_px=args.focal_length_px,
@@ -137,14 +151,33 @@ def main():
         parser.error('Verify and supply --imx500-box-order and --imx500-box-units')
     if args.imx500_model and not args.imx500_model.is_file():
         parser.error('IMX500 RPK file does not exist; package the model on the Pi first')
-    values = [args.flame_height_cm, args.focal_length_px, args.target_height_m,
+    values = [args.flame_height_cm, args.target_height_m,
               args.nozzle_length_m, args.turret_x_m, args.turret_y_m, args.base_height_m]
+    if args.focal_length_px is not None:
+        values.append(args.focal_length_px)
     if not all(math.isfinite(v) for v in values) or args.nozzle_length_m < 0:
         parser.error('Geometry must be finite and nozzle length nonnegative')
     if args.jet_speed_m_s is not None and (not math.isfinite(args.jet_speed_m_s) or args.jet_speed_m_s <= 0):
         parser.error('Jet speed must be finite and positive')
-    if args.flame_height_cm <= 0 or args.focal_length_px <= 0:
+    if args.flame_height_cm <= 0 or (args.focal_length_px is not None and args.focal_length_px <= 0):
         parser.error('Calibration values must be positive')
+    if args.realsense:
+        if __package__:
+            from .realsense_backend import RealSenseCamera, depth_scene
+        else:
+            from realsense_backend import RealSenseCamera, depth_scene
+        try:
+            depth_scene([], [[0]], lambda pixel, z: (0, 0, z),
+                        camera_yaw_deg=args.camera_yaw_deg,
+                        camera_pitch_deg=args.camera_pitch_deg,
+                        deadband_deg=args.alignment_deadband_deg)
+        except ValueError as exc:
+            parser.error(str(exc))
+    if args.dual_depth:
+        if __package__:
+            from .dual_camera_backend import DualCamera
+        else:
+            from dual_camera_backend import DualCamera
     import cv2
     import serial
     model = None
@@ -154,7 +187,16 @@ def main():
     camera = None
     link = None
     try:
-        if args.imx500_model:
+        if args.dual_depth:
+            camera = DualCamera(
+                args.imx500_model, args.dual_calibration,
+                box_order=args.imx500_box_order, box_units=args.imx500_box_units,
+                fire_class=args.fire_class, anchor=args.depth_anchor,
+                camera_yaw_deg=args.camera_yaw_deg, camera_pitch_deg=args.camera_pitch_deg,
+                deadband_deg=args.alignment_deadband_deg)
+        elif args.realsense:
+            camera = RealSenseCamera()
+        elif args.imx500_model:
             from picamera2 import Picamera2
             from picamera2.devices.imx500 import IMX500
             if __package__:
@@ -188,7 +230,19 @@ def main():
             link.write(b'START\n')
         sequence = 0
         while True:
-            if args.imx500_model:
+            if args.dual_depth:
+                frame, scene = camera.capture()
+                message = scene.fire_message()
+                if message is None:
+                    raise RuntimeError('Fire seen but calibrated D435i depth is unavailable; stopping ESP32')
+                guidance = scene.guidance
+                print(guidance.diagnostic() if guidance else 'BASE_GUIDANCE,0,0,0', flush=True)
+                if args.mock_base:
+                    sequence += 1
+                    message = mock_target_message(sequence, guidance)
+            elif args.realsense:
+                frame, depth, deproject = camera.capture()
+            elif args.imx500_model:
                 metadata = camera.capture_metadata()
                 outputs = imx500.get_outputs(metadata, add_batch=True)
                 message = observation_from_outputs(
@@ -205,7 +259,23 @@ def main():
             if not args.imx500_model:
                 results = model(frame, verbose=False)
                 boxes = [box for result in results for box in result.boxes]
-                if args.base_guidance:
+                if args.realsense:
+                    scene = depth_scene(
+                        boxes, depth, deproject, fire_class=args.fire_class,
+                        anchor=args.depth_anchor, camera_yaw_deg=args.camera_yaw_deg,
+                        camera_pitch_deg=args.camera_pitch_deg,
+                        deadband_deg=args.alignment_deadband_deg)
+                    message = scene.fire_message()
+                    if message is None:
+                        # Existing firmware has no explicit invalid-range message.
+                        # Finally sends STOP, rather than authorizing aim on old range.
+                        raise RuntimeError('Fire seen but depth is invalid/mixed; stopping ESP32. Validate surface depth in preview first.')
+                    guidance = scene.guidance
+                    print(guidance.diagnostic() if guidance else 'BASE_GUIDANCE,0,0,0', flush=True)
+                    if args.mock_base:
+                        sequence += 1
+                        message = mock_target_message(sequence, guidance)
+                elif args.base_guidance:
                     guidance = guidance_from_boxes(
                         boxes, frame_width=frame.shape[1], horizontal_focal_px=horizontal_focal,
                         vertical_focal_px=args.focal_length_px,
@@ -234,17 +304,19 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        if link is not None:
-            try:
-                link.write(b'STOP\n')
-                link.flush()
-            finally:
-                link.close()
-        if camera is not None:
-            if args.picamera or args.imx500_model:
-                camera.stop()
-            else:
-                camera.release()
+        try:
+            if link is not None:
+                try:
+                    link.write(b'STOP\n')
+                    link.flush()
+                finally:
+                    link.close()
+        finally:
+            if camera is not None:
+                if args.picamera or args.imx500_model or args.realsense:
+                    camera.stop()
+                else:
+                    camera.release()
 
 
 if __name__ == '__main__':
