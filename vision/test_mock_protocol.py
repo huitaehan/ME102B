@@ -3,7 +3,8 @@ import unittest
 from unittest.mock import patch
 import fire_serial_bridge
 
-from fire_serial_bridge import mock_target_message, start_mock_session
+from fire_serial_bridge import mock_target_message, start_mock_session, depth_message
+from realsense_backend import DepthScene, DepthDetection
 
 
 class FakeSerial:
@@ -19,6 +20,26 @@ class FakeSerial:
 
 
 class MockProtocolTests(unittest.TestCase):
+    def test_depth_mock_requires_wait_capability_before_start(self):
+        link = FakeSerial([b'CAPS,MOCK_BASE_V1\n'])
+        with self.assertRaisesRegex(RuntimeError, 'RANGE_WAIT_V1'):
+            start_mock_session(link, timeout=0.001, require_range_wait=True)
+        self.assertNotIn(b'MOCK_START\n', link.sent)
+
+    def test_wait_capability_can_be_on_another_caps_line(self):
+        link = FakeSerial([b'CAPS,FIRE,RANGE_WAIT_V1\n', b'CAPS,MOCK_BASE_V1\n',
+                           b'MOCK_READY,80MM_WHEELS\n'])
+        start_mock_session(link, timeout=0.1, require_range_wait=True)
+        self.assertEqual(link.sent, [b'CAPS\n', b'MOCK_START\n'])
+
+    def test_unknown_distance_is_distinct_from_clear_fire_in_both_protocols(self):
+        unknown = DepthScene((DepthDetection((0, 0, 100, 100), 0.9, (10, 10, 20, 20),
+                                             None, None, 'Insufficient valid depth'),))
+        self.assertEqual(depth_message(unknown), 'RANGE_UNKNOWN\n')
+        self.assertEqual(depth_message(unknown, 17), 'RANGE_UNKNOWN\n')
+        self.assertEqual(depth_message(DepthScene(())), 'FIRE,0,0,0\n')
+        self.assertEqual(depth_message(DepthScene(()), 18), 'TARGET,18,0,0,0,0\n')
+
     def test_caps_is_retried_if_initial_query_is_lost_during_boot(self):
         class BootingSerial:
             now = 0.0

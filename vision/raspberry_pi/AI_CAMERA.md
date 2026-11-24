@@ -81,8 +81,11 @@ motion needs separate validation. Frames without inference metadata do not erase
 the most recent valid inference image. Startup allows 60 seconds for a first
 pair, subsequent calls allow 3 seconds; neither timeout relaxes freshness limits.
 Timeout diagnostics report sensor, inference and depth frame counts.
-Missing pairs time out; detected fire without
-valid projected depth stops the bridge and sends STOP. No CPU YOLO fallback occurs.
+Missing pairs still time out. Detected fire without valid projected depth sends
+RANGE_UNKNOWN; the bridge/preview continue while ESP32 waits in state 10 with
+motion/pump stopped and pending aim cancelled. Fresh valid range resumes normal
+characterization/alignment. The bridge requires RANGE_WAIT_V1 from updated firmware
+before starting; old firmware must be reflashed. No CPU YOLO fallback occurs.
 No calibration, accelerator inference, frame rate or dual-camera hardware operation
 has been verified on this Windows workspace.
 

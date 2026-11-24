@@ -96,24 +96,39 @@ class BridgeDepthTests(unittest.TestCase):
     def run_bridge(self, depth):
         sent = []
         stopped = []
+        frames = depth if isinstance(depth, list) else [depth]
 
         class Camera:
             captures = 0
 
             def capture(self):
-                self.captures += 1
-                if self.captures > 1:
+                if self.captures >= len(frames):
                     raise KeyboardInterrupt
-                return np.zeros((480, 640, 3), dtype=np.uint8), depth, deproject
+                depth_frame = frames[self.captures]
+                self.captures += 1
+                return np.zeros((480, 640, 3), dtype=np.uint8), depth_frame, deproject
 
             def stop(self):
                 stopped.append(True)
 
         class Link:
-            in_waiting = 0
+            def __init__(self):
+                self.pending = []
+
+            @property
+            def in_waiting(self):
+                return len(self.pending)
 
             def write(self, message):
                 sent.append(message)
+                if message == b'CAPS\n':
+                    self.pending.append(b'CAPS,FIRE,RANGE_WAIT_V1\n')
+                if message == b'RANGE_UNKNOWN\n':
+                    # A request queued before range became invalid must not be solved.
+                    self.pending.append(b'AIM_REQUEST,33,0.8,5,85\n')
+
+            def readline(self):
+                return self.pending.pop(0) if self.pending else b''
 
             def flush(self):
                 pass
@@ -138,14 +153,19 @@ class BridgeDepthTests(unittest.TestCase):
 
     def test_bridge_sends_measured_range_without_focal_calibration(self):
         self.run_bridge(np.ones((480, 640)))
-        self.assertEqual(self.sent, [b'FIRE,1,1.0000,0.9000\n', b'STOP\n'])
+        self.assertEqual(self.sent, [b'CAPS\n', b'FIRE,1,1.0000,0.9000\n', b'STOP\n'])
         self.assertTrue(self.stopped)
 
-    def test_bridge_stops_on_invalid_depth_without_sending_no_fire(self):
-        with self.assertRaisesRegex(RuntimeError, 'depth is invalid'):
-            self.run_bridge(np.zeros((480, 640)))
-        self.assertEqual(self.sent, [b'STOP\n'])
+    def test_bridge_waits_on_invalid_depth_without_sending_no_fire_or_aim(self):
+        self.run_bridge(np.zeros((480, 640)))
+        self.assertEqual(self.sent, [b'CAPS\n', b'RANGE_UNKNOWN\n', b'STOP\n'])
         self.assertTrue(self.stopped)
+
+    def test_bridge_resumes_after_depth_returns_in_same_session(self):
+        valid = np.ones((480, 640))
+        self.run_bridge([valid, np.zeros((480, 640)), valid])
+        self.assertEqual(self.sent, [b'CAPS\n', b'FIRE,1,1.0000,0.9000\n',
+                                    b'RANGE_UNKNOWN\n', b'FIRE,1,1.0000,0.9000\n', b'STOP\n'])
 
 
 if __name__ == '__main__':

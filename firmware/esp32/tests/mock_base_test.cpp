@@ -28,7 +28,7 @@ static void observe(uint32_t sequence, float error, bool detected=true) {
   char message[96];
   snprintf(message,sizeof(message),"TARGET,%lu,%d,%.4f,%.4f,%.3f",
            (unsigned long)sequence,int(detected),detected?0.8:0.0,
-           detected?0.95:0.0,error);
+           detected?0.95:0.0,static_cast<double>(error));
   send(message);
 }
 
@@ -87,6 +87,43 @@ int main() {
   observe(targetSequence+1,15);
   tick();
   assert(state==FIRE_CHECK);
+
+  // Unknown depth pauses active aiming immediately and cancels queued replies.
+  startRun();
+  reachAim(20);
+  uint32_t cancelledRequest=aimRequestId;
+  send("RANGE_UNKNOWN");
+  assert(state==WAIT_RANGE && fire && !rangeKnown && !aimPending && !aimSet);
+  assert(distanceM==0 && !targetInRange() && !baseAligned());
+  assert(mockLeftSpeed==0 && mockRightSpeed==0 && position==target);
+  snprintf(reply,sizeof(reply),"AIM_RESULT,%lu,15",(unsigned long)cancelledRequest);
+  send(reply);
+  assert(state==WAIT_RANGE && !aimSet);
+  // Repeated missing ranges and later camera silence both stay idle, not Fault.
+  send("RANGE_UNKNOWN");
+  uint32_t pausedAt=millis();
+  while(millis()-pausedAt<VISION_TIMEOUT_MS+100) tick();
+  assert(state==WAIT_RANGE && !aimPending);
+  observe(targetSequence+1,0);
+  tick();
+  assert(state==CHARACTERIZE && rangeKnown); // resumes from fresh range only
+  send("RANGE_UNKNOWN");
+  observe(targetSequence+1,0,false);
+  tick();
+  assert(state==SEARCH && !fire); // true no-fire has its own meaning
+
+  // Unknown range interrupts Shoot, but must not clear a STOP fault or start gate.
+  startRun();
+  observe(1,0);
+  state=SHOOT; aimSet=true;
+  send("RANGE_UNKNOWN");
+  assert(state==WAIT_RANGE && !aimSet && !rangeKnown);
+  send("STOP");
+  send("RANGE_UNKNOWN");
+  assert(state==FAULT);
+  state=WAIT_START; mockRun=false;
+  send("RANGE_UNKNOWN");
+  assert(state==WAIT_START && !rangeKnown);
 
   startRun();
   reachAim(20);

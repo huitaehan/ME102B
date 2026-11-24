@@ -163,10 +163,14 @@ ESP32 demo integration, after validating preview measurements:
 
 These jet/geometry numbers are mock examples. Existing physical mode still needs
 all hardware calibrations; omit `--mock-base` for normal FIRE messages. Physical
-base turning remains unimplemented. In RealSense mode, any detected fire with
-invalid/sparse/mixed depth stops the bridge and sends STOP, rather than forwarding
-old distance or a false no-fire frame. STOP latches ESP32 Fault; reset before reuse.
-Capture errors likewise stop the bridge. RGB/depth frame acquisition, accuracy,
+base turning remains unimplemented. In RealSense/dual-depth mode, detected fire
+with invalid/sparse/mixed depth sends RANGE_UNKNOWN and keeps the bridge running.
+ESP32 enters Wait for valid distance (state 10), cancels aiming, stops motion and
+keeps the pump off. Fresh valid range resumes characterization and alignment;
+no cached range or false no-fire observation is sent. Depth modes require the
+RANGE_WAIT_V1 capability: upload the updated FireTurret sketch before using them.
+Capture/serial errors and Ctrl+C still stop the bridge and send STOP, which latches
+ESP32 Fault and requires reset. RGB/depth frame acquisition, accuracy,
 fire association and full hardware operation have not been validated remotely.
 
 From the repository root, create a Python environment and install dependencies:

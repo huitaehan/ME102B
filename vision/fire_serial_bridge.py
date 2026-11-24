@@ -64,8 +64,10 @@ def mock_target_message(sequence, guidance):
             f'{guidance.confidence:.4f},{guidance.yaw_error_deg:.3f}\n')
 
 
-def start_mock_session(link, timeout=10.0):
-    """Refuse physical/old firmware; start only an explicitly advertised mock."""
+def require_capabilities(link, required, timeout=10.0):
+    """Query without changing controller state; refuse an incompatible protocol."""
+    required = set(required)
+    capabilities = set()
     link.write(b'CAPS\n')
     deadline = time.monotonic() + timeout
     next_query = time.monotonic() + 0.5
@@ -78,13 +80,24 @@ def start_mock_session(link, timeout=10.0):
         line = link.readline().decode('ascii', errors='replace').strip()
         if line:
             recent_lines.append(line)
-        if line.startswith('CAPS,') and 'MOCK_BASE_V1' in line.split(','):
-            break
+        if line.startswith('CAPS,'):
+            capabilities.update(line.split(',')[1:])
+            if required <= capabilities:
+                return
     else:
         received = ' | '.join(recent_lines) if recent_lines else '(no serial response)'
         raise RuntimeError(
-            'ESP32 does not advertise MOCK_BASE_V1 within startup timeout. '
-            'Check firmware, serial port and reset/boot timing. Received: ' + received)
+            'ESP32 does not advertise ' + ','.join(sorted(required-capabilities)) +
+            ' within startup timeout. Upload the matching FireTurret firmware or '
+            'check serial port/reset timing. Received: ' + received)
+
+
+def start_mock_session(link, timeout=10.0, require_range_wait=False):
+    """Start only a compatible explicit mock; RANGE_WAIT is needed for depth mode."""
+    required = {'MOCK_BASE_V1'}
+    if require_range_wait:
+        required.add('RANGE_WAIT_V1')
+    require_capabilities(link, required, timeout)
     # Start is stateful; unlike CAPS, do not blindly repeat it.
     link.write(b'MOCK_START\n')
     deadline = time.monotonic() + timeout
@@ -96,6 +109,16 @@ def start_mock_session(link, timeout=10.0):
         if line.startswith('ERR,MOCK_START'):
             raise RuntimeError(line + '; reset ESP32 before another mock run')
     raise RuntimeError('ESP32 did not acknowledge MOCK_START; reset it before retrying')
+
+
+def depth_message(scene, sequence=None):
+    """Preserve three states: no fire, valid target, and fire with unknown range."""
+    message = scene.fire_message()
+    if message is None:
+        return 'RANGE_UNKNOWN\n'
+    if sequence is not None:
+        return mock_target_message(sequence, scene.guidance)
+    return message
 
 
 def main():
@@ -249,27 +272,33 @@ def main():
         link = serial.Serial(args.port, 115200, timeout=0.1, write_timeout=1)
         time.sleep(2)  # Allow ESP32 USB auto-reset to finish.
         if args.mock_base:
-            start_mock_session(link)
+            start_mock_session(link, require_range_wait=args.dual_depth or args.realsense)
+        elif args.dual_depth or args.realsense:
+            require_capabilities(link, {'RANGE_WAIT_V1'})
         if args.start:
             link.write(b'START\n')
         sequence = 0
+        range_ready = True
+        last_depth_notice = 0.0
         while True:
             if args.dual_depth:
                 frame, scene = camera.capture()
                 if preview is not None:
                     preview.publish(frame, scene)
-                message = scene.fire_message()
-                if message is None:
-                    reasons = '; '.join(d.reason for d in scene.detections if d.guidance is None)
-                    raise RuntimeError('Fire seen but calibrated D435i depth is unavailable; stopping ESP32: ' + reasons)
                 guidance = scene.guidance
-                print(guidance.diagnostic() if guidance else 'BASE_GUIDANCE,0,0,0', flush=True)
+                range_ready = guidance is not None
+                if not scene.range_valid:
+                    if time.monotonic()-last_depth_notice >= 1:
+                        print('WAITING_FOR_DEPTH: ' + '; '.join(
+                            d.reason for d in scene.detections if d.guidance is None), flush=True)
+                        last_depth_notice = time.monotonic()
+                else:
+                    print(guidance.diagnostic() if guidance else 'BASE_GUIDANCE,0,0,0', flush=True)
                 if guidance:
                     print(f'VISION: range={guidance.distance_m:.3f} m '
                           f'conf={guidance.confidence:.2f} bearing={guidance.yaw_error_deg:+.2f} deg', flush=True)
-                if args.mock_base:
-                    sequence += 1
-                    message = mock_target_message(sequence, guidance)
+                sequence += 1
+                message = depth_message(scene, sequence if args.mock_base else None)
             elif args.realsense:
                 frame, depth, deproject = camera.capture()
             elif args.imx500_model:
@@ -295,16 +324,16 @@ def main():
                         anchor=args.depth_anchor, camera_yaw_deg=args.camera_yaw_deg,
                         camera_pitch_deg=args.camera_pitch_deg,
                         deadband_deg=args.alignment_deadband_deg)
-                    message = scene.fire_message()
-                    if message is None:
-                        # Existing firmware has no explicit invalid-range message.
-                        # Finally sends STOP, rather than authorizing aim on old range.
-                        raise RuntimeError('Fire seen but depth is invalid/mixed; stopping ESP32. Validate surface depth in preview first.')
                     guidance = scene.guidance
-                    print(guidance.diagnostic() if guidance else 'BASE_GUIDANCE,0,0,0', flush=True)
-                    if args.mock_base:
-                        sequence += 1
-                        message = mock_target_message(sequence, guidance)
+                    range_ready = guidance is not None
+                    if not scene.range_valid:
+                        if time.monotonic()-last_depth_notice >= 1:
+                            print('WAITING_FOR_DEPTH: no usable surface depth', flush=True)
+                            last_depth_notice = time.monotonic()
+                    else:
+                        print(guidance.diagnostic() if guidance else 'BASE_GUIDANCE,0,0,0', flush=True)
+                    sequence += 1
+                    message = depth_message(scene, sequence if args.mock_base else None)
                 elif args.base_guidance:
                     guidance = guidance_from_boxes(
                         boxes, frame_width=frame.shape[1], horizontal_focal_px=horizontal_focal,
@@ -330,7 +359,9 @@ def main():
                 print(line)
                 if preview is not None and line.startswith('STATE,'):
                     preview.state_line = 'ESP32 ' + line
-                reply = solve_request(line, args)
+                # RANGE_UNKNOWN cancels a pending aim on ESP32. Do not solve a
+                # queued request against its former distance during that wait.
+                reply = solve_request(line, args) if range_ready else None
                 if reply is not None:
                     link.write(reply.encode('ascii'))
     except KeyboardInterrupt:

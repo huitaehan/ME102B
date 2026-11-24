@@ -52,7 +52,8 @@ Live mocked turning never moves the actual camera. Manually rotate the rigid
 camera pair together (or reposition the test image) until displayed bearing is
 within 3 degrees. Keep detection stable for the 500 ms alignment confirmation
 and through the simulated one-second elevation move. Losing detection returns
-to Search; invalid depth stops the bridge. This test does not validate actual
+to Search; invalid depth pauses in Wait for valid distance instead of stopping
+the bridge. This test does not validate actual
 wheel feedback, IR detection, or pumping.
 
 Stop the browser preview before starting this bridge:
@@ -103,6 +104,16 @@ relative bearing degrees (left positive). No target is `TARGET,2,0,0,0,0`.
 Old/invalid observations are rejected without refreshing freshness. Legacy FIRE
 messages are rejected during a mock session to prevent bypassing alignment.
 State 9 is mock base alignment; previous state numbers 0 through 8 are unchanged.
+
+State 10 is Wait for valid distance. `RANGE_UNKNOWN` means fire was detected but
+its range cannot be measured. ESP32 clears the old range and alignment, cancels
+pending/completed aiming, stops motion, turns the pump off, and waits. Repeated
+unknown ranges or later camera silence keep it idle. A fresh TARGET with valid
+range resumes Characterize/Align; a genuine no-fire TARGET returns to Search.
+RANGE_UNKNOWN cannot leave Fault, start the robot, or bypass homing. The Pi skips
+queued AIM_REQUEST calculations while current depth is unknown. It never sends a
+made-up range or a false clear-fire frame. Capability RANGE_WAIT_V1 is required
+by the depth bridge (including mock mode), so upload the updated sketch once.
 
 Lost/stale observations stop simulated wheel motion and return to Search.
 An alignment timeout, solver timeout/error, or STOP enters Fault. Fresh off-centre

@@ -140,6 +140,8 @@ class ProjectionTests(unittest.TestCase):
                 preview_events.append(('close', None))
         class Link:
             in_waiting = 0
+            def readline(self):
+                return b'CAPS,RANGE_WAIT_V1\n'
             def write(self, data):
                 sent.append(data)
             def flush(self):
@@ -161,7 +163,7 @@ class ProjectionTests(unittest.TestCase):
                   patch.object(fire_serial_bridge.time, 'sleep'),
                   patch.object(dual_camera_backend, 'DualCamera', Camera)):
                 fire_serial_bridge.main()
-        self.assertEqual(sent, [b'FIRE,0,0,0\n', b'STOP\n'])
+        self.assertEqual(sent, [b'CAPS\n', b'FIRE,0,0,0\n', b'STOP\n'])
         self.assertEqual(len(camera_opens), 1)
         self.assertEqual([e[0] for e in preview_events], ['open', 'frame', 'close'])
         self.assertEqual(preview_events[1][1].fire_message(), 'FIRE,0,0,0\n')

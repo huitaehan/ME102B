@@ -60,6 +60,17 @@ Use a single-target scene. Distance assumes a known flame height; it is an estim
 
 ## Camera bridge
 
+Depth-enabled Pi bridges now require `RANGE_WAIT_V1` in the CAPS response. Upload
+the updated FireTurret sketch before running `--dual-depth` or `--realsense`.
+The newline-terminated `RANGE_UNKNOWN` message means fire is detected but its
+distance is unavailable. It invalidates the old range/heading, cancels aiming,
+stops motion and turns the pump off, then enters Wait for valid distance (10)
+from active operation. It does not start the controller or leave Fault/Homing.
+While waiting, continued unknown depth or camera silence keeps outputs stopped.
+Fresh valid FIRE/TARGET range returns to Characterize; fresh no-fire returns to
+Search. Mock operation must pass horizontal alignment again. No previous range
+may authorize shooting. Actual camera/serial failure or STOP still latches Fault.
+
 The existing scripts only display detections, so the new bridge sends one complete
 observation per frame over USB serial. Run from `/workspace/ME102B` (or your local
 repository root) on the machine with the camera and ESP32 physically connected:

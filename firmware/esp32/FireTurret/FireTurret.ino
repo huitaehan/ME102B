@@ -36,11 +36,12 @@ constexpr uint32_t VISION_TIMEOUT_MS=1500, HOMING_TIMEOUT_MS=15000;
 constexpr uint32_t SHOOT_MS=3000, SETTLE_MS=500, CLEAR_MS=2000;
 
 enum State { WAIT_START, HOMING, SEARCH, CHARACTERIZE, DRIVE,
-             CALCULATE_AIM, SHOOT, FIRE_CHECK, FAULT, ALIGN_BASE };
+             CALCULATE_AIM, SHOOT, FIRE_CHECK, FAULT, ALIGN_BASE, WAIT_RANGE };
 State state=WAIT_START;
 uint32_t entered=0, lastVision=0, frameId=0, checkFrame=0;
 uint32_t nextStep=0, pulseStarted=0, switchChanged=0, clearSince=0;
 bool pulseHigh=false, homed=false, fire=false, haveVision=false;
+bool rangeKnown=false;
 bool switchRaw=false, switchStable=false;
 bool startRaw=false, startStable=false, previousStart=false;
 uint32_t startChanged=0;
@@ -66,7 +67,7 @@ float mockLeftM=0, mockRightM=0, mockLeftSpeed=0, mockRightSpeed=0;
 
 float baseErrorDeg() { return bearingDeg-(baseHeadingDeg-bearingHeadingDeg); }
 bool baseAligned() {
-  return mockRun && haveBearing && mockAligned && targetVisible() &&
+  return mockRun && rangeKnown && haveBearing && mockAligned && targetVisible() &&
          fabsf(baseErrorDeg())<=BASE_TOLERANCE_DEG;
 }
 
@@ -92,7 +93,8 @@ void transition(State next) {
   Serial.printf("STATE,%d\n",int(next));
   if(DEMO_MODE) {
     const char *names[]={"Wait for start","Homing","Search","Characterize","Drive",
-                         "Calculate & aim","Shoot","Fire check","Fault","Align base (mock)"};
+                         "Calculate & aim","Shoot","Fire check","Fault","Align base (mock)",
+                         "Wait for valid distance"};
     Serial.printf("DEMO STATE: %s\n",names[int(next)]);
     if(next==HOMING) Serial.println("DEMO ACTION: motor disabled; press the real home switch.");
     if(next==DRIVE) Serial.println("DEMO ACTION: driving is not implemented.");
@@ -123,7 +125,7 @@ void checkLimitSwitch() {
 // EVENT CHECKER: Read a camera message or a start/stop command.
 void acceptLine(char *line) {
   if(!strcmp(line,"CAPS")) {
-    Serial.println("CAPS,FIRE,AIM_REQUEST,AIM_RESULT,AIM_ERROR,STOP,ELEVATION_ONLY");
+    Serial.println("CAPS,FIRE,AIM_REQUEST,AIM_RESULT,AIM_ERROR,STOP,ELEVATION_ONLY,RANGE_WAIT_V1");
     if(DEMO_MODE) Serial.println("CAPS,MOCK_BASE_V1,TARGET,MOCK_START");
     return;
   }
@@ -132,11 +134,21 @@ void acceptLine(char *line) {
       Serial.println("ERR,MOCK_START,NOT_ALLOWED"); return;
     }
     mockRun=true; demoCamera=false; homed=true; position=target=0;
-    haveBearing=haveVision=fire=mockAligned=false; targetSequence=0;
+    haveBearing=haveVision=fire=mockAligned=rangeKnown=false; targetSequence=0;
     baseHeadingDeg=mockLeftM=mockRightM=0;
     Serial.println("MOCK_READY,80MM_WHEELS,TRACK_200MM_EXAMPLE,COUNTS_360_EXAMPLE");
     Serial.println("MOCK: homing and infrared simulated; all actuator GPIO disabled");
     transition(SEARCH); return;
+  }
+  if(!strcmp(line,"RANGE_UNKNOWN")) {
+    // Fire is present, but distance is invalid. Do not reuse old range or
+    // interpret this as a clear-fire frame. Normal start/homing/FAULT stay latched.
+    demoCamera=false; fire=true; rangeKnown=false; distanceM=0;
+    haveBearing=mockAligned=false;
+    haveVision=true; lastVision=millis(); ++frameId;
+    if(state!=WAIT_START && state!=HOMING && state!=FAULT && state!=WAIT_RANGE)
+      transition(WAIT_RANGE); // Pump off, stop motion, cancel pending aim.
+    return;
   }
   if(!strncmp(line,"TARGET,",7)) {
     if(!DEMO_MODE || !mockRun) { Serial.println("ERR,TARGET,MOCK_NOT_STARTED"); return; }
@@ -149,7 +161,7 @@ void acceptLine(char *line) {
        (detected && (d<=0 || c<=0.40f))) {
       Serial.println("ERR,TARGET,INVALID_OR_OLD"); return;
     }
-    targetSequence=sequence; fire=detected; distanceM=d; confidence=c;
+    targetSequence=sequence; fire=detected; rangeKnown=detected; distanceM=d; confidence=c;
     haveVision=haveBearing=true; lastVision=millis(); ++frameId;
     bearingDeg=yaw; bearingHeadingDeg=baseHeadingDeg;
     if(!fire || fabsf(yaw)>BASE_TOLERANCE_DEG) mockAligned=false;
@@ -201,7 +213,7 @@ void acceptLine(char *line) {
   if((detected!=0 && detected!=1) || !isfinite(d) || !isfinite(c) || c<0 || c>1) return;
   if(detected && (d<=0 || c<=0.40f)) return;
   demoCamera=false;
-  fire=detected; distanceM=d; confidence=c;
+  fire=detected; rangeKnown=detected; distanceM=d; confidence=c;
   haveVision=true; lastVision=millis(); ++frameId;
 }
 
@@ -225,7 +237,7 @@ void checkSerial() {
 void serviceDemoCamera() {
   if(!DEMO_MODE || !demoCamera || millis()-demoLastFrame<DEMO_FRAME_MS) return;
   demoLastFrame=millis();
-  fire=demoFire; distanceM=demoDistanceM; confidence=demoFire?0.9f:0.0f;
+  fire=demoFire; rangeKnown=demoFire; distanceM=demoDistanceM; confidence=demoFire?0.9f:0.0f;
   haveVision=true; lastVision=millis(); ++frameId;
 }
 
@@ -236,7 +248,7 @@ bool visionFresh() { return haveVision && millis()-lastVision<VISION_TIMEOUT_MS;
 bool targetVisible() { return visionFresh() && fire; }
 
 // EVENT CHECKER: Check if the fire is within shooting range.
-bool targetInRange() { return distanceM>=MIN_RANGE_M && distanceM<=MAX_RANGE_M; }
+bool targetInRange() { return rangeKnown && distanceM>=MIN_RANGE_M && distanceM<=MAX_RANGE_M; }
 
 // SERVICE FUNCTION: Read and average the analog flame sensor without waiting.
 void serviceFlameSensor() {
@@ -397,8 +409,16 @@ void serviceStateMachine() {
     case CHARACTERIZE:
 
       if(!targetVisible()) transition(SEARCH);
+      else if(!rangeKnown) transition(WAIT_RANGE);
       else if(mockRun && !baseAligned()) transition(ALIGN_BASE);
       else if(flameConfirmed()) transition(targetInRange()?CALCULATE_AIM:DRIVE);
+      break;
+    case WAIT_RANGE:
+      // Stay idle even if camera data goes stale. Only a fresh, valid range can
+      // resume characterization/alignment. An explicit no-fire frame can search.
+      pump(false); stopMotion();
+      if(visionFresh() && !fire) transition(SEARCH);
+      else if(targetVisible() && rangeKnown) transition(CHARACTERIZE);
       break;
     case ALIGN_BASE:
       if(!targetVisible() || !haveBearing) transition(SEARCH);
@@ -414,6 +434,7 @@ void serviceStateMachine() {
     case CALCULATE_AIM:
 
       if(!targetVisible()) { transition(SEARCH); break; }
+      if(!rangeKnown) { transition(WAIT_RANGE); break; }
       if(mockRun && !baseAligned()) { transition(ALIGN_BASE); break; }
       if(!flameConfirmed()) { transition(CHARACTERIZE); break; }
       if(!targetInRange()) { transition(DRIVE); break; }
