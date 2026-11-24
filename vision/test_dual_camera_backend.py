@@ -118,10 +118,12 @@ class ProjectionTests(unittest.TestCase):
 
     def test_bridge_uses_dual_backend_without_cpu_yolo(self):
         sent = []
+        preview_events = []
+        camera_opens = []
         class Camera:
             frames = 0
             def __init__(self, *args, **kwargs):
-                pass
+                camera_opens.append(True)
             def capture(self):
                 self.frames += 1
                 if self.frames > 1:
@@ -129,6 +131,13 @@ class ProjectionTests(unittest.TestCase):
                 return np.zeros((480, 640, 3)), DepthScene(())
             def stop(self):
                 pass
+        class Preview:
+            def __init__(self, port):
+                preview_events.append(('open', port))
+            def publish(self, frame, scene):
+                preview_events.append(('frame', scene))
+            def close(self):
+                preview_events.append(('close', None))
         class Link:
             in_waiting = 0
             def write(self, data):
@@ -144,14 +153,18 @@ class ProjectionTests(unittest.TestCase):
             model.write_bytes(b'test placeholder; no hardware test')
             argv = ['main.py', '--port', 'MOCK', '--dual-depth', '--imx500-model', str(model),
                     '--dual-calibration', 'test.json', '--imx500-box-order', 'xyxy',
-                    '--imx500-box-units', 'normalized']
+                    '--imx500-box-units', 'normalized', '--preview-port', '8080']
             modules = dict(serial=SimpleNamespace(Serial=lambda *a, **k: Link()),
-                           ultralytics=SimpleNamespace(YOLO=forbidden_yolo))
+                           ultralytics=SimpleNamespace(YOLO=forbidden_yolo),
+                           bridge_preview=SimpleNamespace(BridgePreview=Preview))
             with (patch.dict(sys.modules, modules), patch.object(sys, 'argv', argv),
                   patch.object(fire_serial_bridge.time, 'sleep'),
                   patch.object(dual_camera_backend, 'DualCamera', Camera)):
                 fire_serial_bridge.main()
         self.assertEqual(sent, [b'FIRE,0,0,0\n', b'STOP\n'])
+        self.assertEqual(len(camera_opens), 1)
+        self.assertEqual([e[0] for e in preview_events], ['open', 'frame', 'close'])
+        self.assertEqual(preview_events[1][1].fire_message(), 'FIRE,0,0,0\n')
 
 
 if __name__ == '__main__':

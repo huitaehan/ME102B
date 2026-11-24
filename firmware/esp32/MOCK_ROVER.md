@@ -41,6 +41,20 @@ If you see `ERR,MOCK_START,NOT_ALLOWED`, reset ESP32 and rerun.
 
 ## Live camera observations
 
+For calibrated IMX500 + D435i input, the integrated bridge also supports
+`--preview-port 8080`. It displays the very same frames/measurements sent to
+ESP32, with confidence, measured horizontal range, base bearing/alignment and
+the latest state number. Open localhost:8080 through the laptop SSH tunnel.
+No second camera process or CPU YOLO inference is started for the preview.
+Do not run standalone camera viewers at the same time.
+
+Live mocked turning never moves the actual camera. Manually rotate the rigid
+camera pair together (or reposition the test image) until displayed bearing is
+within 3 degrees. Keep detection stable for the 500 ms alignment confirmation
+and through the simulated one-second elevation move. Losing detection returns
+to Search; invalid depth stops the bridge. This test does not validate actual
+wheel feedback, IR detection, or pumping.
+
 Stop the browser preview before starting this bridge:
 
 ```sh

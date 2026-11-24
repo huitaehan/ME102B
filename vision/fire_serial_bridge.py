@@ -109,6 +109,8 @@ def main():
     parser.add_argument('--dual-depth', action='store_true',
                         help='Use IMX500 accelerator + D435i depth only; requires imx500-model and calibration')
     parser.add_argument('--dual-calibration', type=Path)
+    parser.add_argument('--preview-port', type=int,
+                        help='Optional browser preview of the same dual-depth observations, e.g. 8080')
     parser.add_argument('--depth-anchor', choices=('center', 'bottom'), default='bottom')
     parser.add_argument('--camera-pitch-deg', type=float, default=0.0,
                         help='D435i mounting pitch above horizontal for ground-plane range')
@@ -135,6 +137,8 @@ def main():
     parser.add_argument('--mock-base', action='store_true',
                         help='Send TARGET observations to DEMO_MODE ESP32; simulate all actuators/sensors')
     args = parser.parse_args()
+    if args.preview_port is not None and (not args.dual_depth or not 1 <= args.preview_port <= 65535):
+        parser.error('--preview-port requires --dual-depth and a port between 1 and 65535')
     if args.dual_depth and (not args.imx500_model or not args.dual_calibration):
         parser.error('--dual-depth needs --imx500-model and --dual-calibration')
     if not args.realsense and not args.dual_depth and args.focal_length_px is None:
@@ -199,6 +203,7 @@ def main():
         model = YOLO(args.model)
     camera = None
     link = None
+    preview = None
     try:
         if args.dual_depth:
             camera = DualCamera(
@@ -235,6 +240,12 @@ def main():
             camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
             if not camera.isOpened():
                 raise RuntimeError('Camera failed to open')
+        if args.preview_port is not None:
+            if __package__:
+                from .bridge_preview import BridgePreview
+            else:
+                from bridge_preview import BridgePreview
+            preview = BridgePreview(args.preview_port)
         link = serial.Serial(args.port, 115200, timeout=0.1, write_timeout=1)
         time.sleep(2)  # Allow ESP32 USB auto-reset to finish.
         if args.mock_base:
@@ -245,11 +256,17 @@ def main():
         while True:
             if args.dual_depth:
                 frame, scene = camera.capture()
+                if preview is not None:
+                    preview.publish(frame, scene)
                 message = scene.fire_message()
                 if message is None:
-                    raise RuntimeError('Fire seen but calibrated D435i depth is unavailable; stopping ESP32')
+                    reasons = '; '.join(d.reason for d in scene.detections if d.guidance is None)
+                    raise RuntimeError('Fire seen but calibrated D435i depth is unavailable; stopping ESP32: ' + reasons)
                 guidance = scene.guidance
                 print(guidance.diagnostic() if guidance else 'BASE_GUIDANCE,0,0,0', flush=True)
+                if guidance:
+                    print(f'VISION: range={guidance.distance_m:.3f} m '
+                          f'conf={guidance.confidence:.2f} bearing={guidance.yaw_error_deg:+.2f} deg', flush=True)
                 if args.mock_base:
                     sequence += 1
                     message = mock_target_message(sequence, guidance)
@@ -311,6 +328,8 @@ def main():
             while link.in_waiting:
                 line = link.readline().decode('ascii', errors='replace').strip()
                 print(line)
+                if preview is not None and line.startswith('STATE,'):
+                    preview.state_line = 'ESP32 ' + line
                 reply = solve_request(line, args)
                 if reply is not None:
                     link.write(reply.encode('ascii'))
@@ -325,11 +344,15 @@ def main():
                 finally:
                     link.close()
         finally:
-            if camera is not None:
-                if args.picamera or args.imx500_model or args.realsense:
-                    camera.stop()
-                else:
-                    camera.release()
+            try:
+                if camera is not None:
+                    if args.picamera or args.imx500_model or args.realsense:
+                        camera.stop()
+                    else:
+                        camera.release()
+            finally:
+                if preview is not None:
+                    preview.close()
 
 
 if __name__ == '__main__':
