@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
+import fire_serial_bridge
 
 from fire_serial_bridge import mock_target_message, start_mock_session
 
@@ -17,6 +19,36 @@ class FakeSerial:
 
 
 class MockProtocolTests(unittest.TestCase):
+    def test_caps_is_retried_if_initial_query_is_lost_during_boot(self):
+        class BootingSerial:
+            now = 0.0
+            def __init__(self):
+                self.sent = []
+                self.pending = []
+                self.queries = 0
+            def write(self, data):
+                self.sent.append(data)
+                if data == b'CAPS\n':
+                    self.queries += 1
+                    if self.now >= 5.0:
+                        self.pending.append(b'CAPS,MOCK_BASE_V1,TARGET,MOCK_START\n')
+                elif data == b'MOCK_START\n':
+                    self.pending.append(b'MOCK_READY,80MM_WHEELS\n')
+            def readline(self):
+                self.now += 0.1
+                return self.pending.pop(0) if self.pending else b'BOOT\n'
+        link = BootingSerial()
+        with patch.object(fire_serial_bridge.time, 'monotonic', side_effect=lambda: link.now):
+            start_mock_session(link)
+        self.assertGreater(link.queries, 1)
+        self.assertEqual(link.sent.count(b'MOCK_START\n'), 1)
+
+    def test_timeout_reports_actual_serial_response(self):
+        link = FakeSerial([b'OTHER_FIRMWARE\n'])
+        with self.assertRaisesRegex(RuntimeError, 'Received: OTHER_FIRMWARE'):
+            start_mock_session(link, timeout=0.001)
+        self.assertNotIn(b'MOCK_START\n', link.sent)
+
     def test_capability_check_then_explicit_mock_start(self):
         link = FakeSerial([b'BOOT\n', b'CAPS,FIRE,STOP\n',
                            b'CAPS,MOCK_BASE_V1,TARGET,MOCK_START\n',

@@ -1,5 +1,6 @@
 """YOLO -> ESP32 USB serial bridge; run from repository root."""
 import argparse
+from collections import deque
 import importlib.util
 import math
 from pathlib import Path
@@ -63,16 +64,28 @@ def mock_target_message(sequence, guidance):
             f'{guidance.confidence:.4f},{guidance.yaw_error_deg:.3f}\n')
 
 
-def start_mock_session(link, timeout=4.0):
+def start_mock_session(link, timeout=10.0):
     """Refuse physical/old firmware; start only an explicitly advertised mock."""
     link.write(b'CAPS\n')
     deadline = time.monotonic() + timeout
+    next_query = time.monotonic() + 0.5
+    recent_lines = deque(maxlen=8)
     while time.monotonic() < deadline:
+        if time.monotonic() >= next_query:
+            # CAPS is read-only: retry if the first query arrived during boot.
+            link.write(b'CAPS\n')
+            next_query = time.monotonic() + 0.5
         line = link.readline().decode('ascii', errors='replace').strip()
+        if line:
+            recent_lines.append(line)
         if line.startswith('CAPS,') and 'MOCK_BASE_V1' in line.split(','):
             break
     else:
-        raise RuntimeError('ESP32 does not advertise MOCK_BASE_V1; upload demo FireTurret firmware')
+        received = ' | '.join(recent_lines) if recent_lines else '(no serial response)'
+        raise RuntimeError(
+            'ESP32 does not advertise MOCK_BASE_V1 within startup timeout. '
+            'Check firmware, serial port and reset/boot timing. Received: ' + received)
+    # Start is stateful; unlike CAPS, do not blindly repeat it.
     link.write(b'MOCK_START\n')
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -82,7 +95,7 @@ def start_mock_session(link, timeout=4.0):
             return
         if line.startswith('ERR,MOCK_START'):
             raise RuntimeError(line + '; reset ESP32 before another mock run')
-    raise RuntimeError('ESP32 did not acknowledge MOCK_START')
+    raise RuntimeError('ESP32 did not acknowledge MOCK_START; reset it before retrying')
 
 
 def main():
