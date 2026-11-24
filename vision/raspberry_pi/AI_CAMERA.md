@@ -74,10 +74,14 @@ ESP32 mock integration uses the same calibrated source (stop the preview first):
 ```
 
 Jet speed/geometry here are mock examples. Missing inference is never treated as
-no fire. Fresh captures are kept in latest-frame buffers, and software delivery
+no fire. Fresh captures are kept in short bounded histories, and software delivery
 age/skew are bounded (200/100 ms). These limits are NOT exposure synchronization;
 validate initially with stationary targets and a stopped rover. Timing under
-motion needs separate validation. Missing pairs time out; detected fire without
+motion needs separate validation. Frames without inference metadata do not erase
+the most recent valid inference image. Startup allows 60 seconds for a first
+pair, subsequent calls allow 3 seconds; neither timeout relaxes freshness limits.
+Timeout diagnostics report sensor, inference and depth frame counts.
+Missing pairs time out; detected fire without
 valid projected depth stops the bridge and sends STOP. No CPU YOLO fallback occurs.
 No calibration, accelerator inference, frame rate or dual-camera hardware operation
 has been verified on this Windows workspace.

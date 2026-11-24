@@ -2,6 +2,8 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+import threading
+import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -9,7 +11,7 @@ from unittest.mock import patch
 import numpy as np
 
 import dual_camera_backend
-from dual_camera_backend import load_calibration, project_depth_to_ai
+from dual_camera_backend import load_calibration, project_depth_to_ai, fresh_pair, LatestCapture
 from imx500_backend import preview_boxes_from_outputs
 from realsense_backend import DepthScene
 import fire_serial_bridge
@@ -22,6 +24,44 @@ def calibration():
                 ai_K=np.array([[500., 0, 320], [0, 500, 240], [0, 0, 1]]),
                 ai_distortion=np.zeros(5), R_depth_to_ai=np.eye(3),
                 t_depth_to_ai_m=np.zeros(3))
+
+
+class PairingTests(unittest.TestCase):
+    def test_nearest_depth_is_chosen_from_recent_history(self):
+        ai = [(1, 10.0, ('image', []))]
+        depth = [(1, 10.01, 'matched'), (2, 10.09, 'newest')]
+        pair = fresh_pair(ai, depth, 10.10, 0)
+        self.assertEqual(pair[1][2], 'matched')
+
+    def test_used_stale_and_excessively_skewed_frames_are_rejected(self):
+        ai = [(1, 10.0, ('image', []))]
+        self.assertIsNone(fresh_pair(ai, [(1, 10.01, 'depth')], 10.10, 1))
+        self.assertIsNone(fresh_pair(ai, [(1, 10.25, 'depth')], 10.26, 0))
+        self.assertIsNone(fresh_pair(ai, [(1, 10.15, 'depth')], 10.18, 0))
+
+    def test_sensor_frames_without_inference_do_not_erase_valid_zero_detections(self):
+        # A zero-detection inference is valid. A missing inference is not.
+        finished = threading.Event()
+        values = iter([('image1', []), ('image2', None), ('image3', None)])
+        def capture():
+            try:
+                return next(values)
+            except StopIteration:
+                finished.set()
+                release.wait(timeout=1)
+                return ('image4', None)
+        release = threading.Event()
+        worker = LatestCapture(capture, accept=lambda v: v[1] is not None)
+        try:
+            self.assertTrue(finished.wait(timeout=1))
+            self.assertEqual(worker.get()[2], ('image1', []))
+            self.assertEqual(worker.frames, 3)
+            self.assertEqual(worker.accepted, 1)
+            self.assertEqual(len(worker.snapshot()), 1)
+        finally:
+            worker.stopped.set()
+            release.set()
+            worker.thread.join(timeout=1)
 
 
 class ProjectionTests(unittest.TestCase):

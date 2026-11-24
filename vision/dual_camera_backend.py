@@ -4,6 +4,7 @@ No Ultralytics/PyTorch import or CPU neural-network inference is used here.
 """
 
 import json
+from collections import deque
 from pathlib import Path
 import threading
 import time
@@ -69,13 +70,17 @@ def project_depth_to_ai(vertices, calibration):
 
 
 class LatestCapture:
-    """One latest result per device, avoiding an accumulating processing queue.
+    """Bounded recent results; rejected frames never overwrite valid inference.
 
     Completion times bound software delivery skew only, not exposure synchrony.
     """
-    def __init__(self, capture):
+    def __init__(self, capture, accept=lambda value: True):
         self.capture = capture
+        self.accept = accept
         self.latest = None
+        self.history = deque(maxlen=8)
+        self.frames = 0
+        self.accepted = 0
         self.error = None
         self.lock = threading.Lock()
         self.stopped = threading.Event()
@@ -89,7 +94,11 @@ class LatestCapture:
                 value = self.capture()
                 sequence += 1
                 with self.lock:
-                    self.latest = (sequence, time.monotonic(), value)
+                    self.frames += 1
+                    if self.accept(value):
+                        self.accepted += 1
+                        self.latest = (sequence, time.monotonic(), value)
+                        self.history.append(self.latest)
         except Exception as exc:
             if not self.stopped.is_set():
                 self.error = exc
@@ -99,6 +108,27 @@ class LatestCapture:
             raise RuntimeError('Camera capture failed') from self.error
         with self.lock:
             return self.latest
+
+    def snapshot(self):
+        if self.error:
+            raise RuntimeError('Camera capture failed') from self.error
+        with self.lock:
+            return list(self.history)
+
+
+def fresh_pair(ai_frames, depth_frames, now, last_ai, max_age=0.20, max_skew=0.10):
+    """Newest unused inference and nearest depth by software delivery time.
+
+    Keeping history does not relax age limits or claim exposure synchronization.
+    """
+    for ai in reversed(ai_frames):
+        if ai[0] <= last_ai or not 0 <= now-ai[1] < max_age:
+            continue
+        candidates = [d for d in depth_frames if 0 <= now-d[1] < max_age
+                      and abs(ai[1]-d[1]) <= max_skew]
+        if candidates:
+            return ai, min(candidates, key=lambda d: abs(ai[1]-d[1]))
+    return None
 
 
 class DualCamera:
@@ -167,32 +197,40 @@ class DualCamera:
                 points = self.cloud.calculate(frame)
                 return np.asanyarray(points.get_vertices()).view(np.float32).reshape(-1, 3).copy()
 
-            self.workers = [LatestCapture(capture_ai), LatestCapture(capture_depth)]
+            # Inference is not present on every sensor frame. Preserve each
+            # inference-bearing image, including valid zero-detection results.
+            self.workers.append(LatestCapture(capture_ai, accept=lambda v: v[1] is not None))
+            self.workers.append(LatestCapture(capture_depth))
         except Exception:
             self.stop()
             raise
 
     def capture(self):
-        deadline = time.monotonic()+3
+        startup = self.last_ai == 0
+        deadline = time.monotonic()+(60 if startup else 3)
+        if startup:
+            print('Waiting for first IMX500 inference + depth pair (up to 60s)...', flush=True)
         while time.monotonic() < deadline:
-            ai, depth = [w.get() for w in self.workers]
-            if ai and depth and ai[0] != self.last_ai:
-                now = time.monotonic()
-                # No hardware synchronization is claimed. Test moving targets separately.
-                if now-min(ai[1], depth[1]) < 0.20 and abs(ai[1]-depth[1]) <= 0.10:
-                    image, boxes = ai[2]
-                    if boxes is not None:
-                        self.last_ai = ai[0]
-                        mapped = (project_depth_to_ai(depth[2], self.calibration) if boxes else
-                                  np.zeros((480, 640), dtype=np.float32))
-                        def deproject(pixel, z):
-                            ray = self.cv2.undistortPoints(
-                                np.array(pixel, dtype=float).reshape(1, 1, 2),
-                                self.calibration['ai_K'], self.calibration['ai_distortion']).reshape(2)
-                            return ray[0]*z, ray[1]*z, z
-                        return image, depth_scene(boxes, mapped, deproject, **self.scene_options)
+            ai_frames, depth_frames = [w.snapshot() for w in self.workers]
+            pair = fresh_pair(ai_frames, depth_frames, time.monotonic(), self.last_ai)
+            if pair:
+                ai, depth = pair
+                image, boxes = ai[2]
+                self.last_ai = ai[0]
+                mapped = (project_depth_to_ai(depth[2], self.calibration) if boxes else
+                          np.zeros((480, 640), dtype=np.float32))
+                def deproject(pixel, z):
+                    ray = self.cv2.undistortPoints(
+                        np.array(pixel, dtype=float).reshape(1, 1, 2),
+                        self.calibration['ai_K'], self.calibration['ai_distortion']).reshape(2)
+                    return ray[0]*z, ray[1]*z, z
+                return image, depth_scene(boxes, mapped, deproject, **self.scene_options)
             time.sleep(0.005)
-        raise RuntimeError('No fresh IMX500 inference/depth pair; check model and camera streams')
+        ai, depth = self.workers
+        raise RuntimeError(
+            'No fresh IMX500 inference/depth pair: '
+            f'AI frames={ai.frames}, inference frames={ai.accepted}, depth frames={depth.accepted}. '
+            'Check these streams and software delivery timing; stale data was not reused.')
 
     def stop(self):
         for worker in self.workers:
